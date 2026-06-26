@@ -140,7 +140,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.2</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.3</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -189,7 +189,8 @@ textarea::placeholder{color:#444}
           <button class="btn-s" onclick="copyVal()">복사</button>
         </div>
       </div>
-      <div style="text-align:center">
+      <div style="text-align:center;display:flex;gap:8px;justify-content:center">
+        <button class="btn-s" onclick="switchCamera()" id="camSwitchBtn">🔄 전면/후면 전환</button>
         <button class="btn-s" onclick="stopScan()">스캔 중지</button>
       </div>
     </div>
@@ -233,7 +234,7 @@ textarea::placeholder{color:#444}
 
 <script>
 // ===== 전역 =====
-let fmt='CODE128', scanner=null, deferP=null;
+let fmt='CODE128', scanner=null, deferP=null, camFacing='environment';
 const ocrFiles=[];
 
 // ===== 네비 =====
@@ -306,28 +307,52 @@ async function startScan(){
 
   try{
     // 권한 요청 테스트
-    const testStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const testStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:camFacing}});
     testStream.getTracks().forEach(t=>t.stop());
 
     document.getElementById('scanPerm').style.display='none';
     document.getElementById('scanActive').style.display='block';
 
-    scanner=new Html5Qrcode('scanZone');
-    await scanner.start(
-      {facingMode:'environment'},
-      {fps:10,qrbox:{width:260,height:260},aspectRatio:1.0},
-      (text,result)=>{
-        document.getElementById('scanVal').textContent=text;
-        document.getElementById('scanType').textContent=result.result.format?.formatName||'QR/Barcode';
-        document.getElementById('scanResult').style.display='block';
-        toast('스캔 완료: '+text);
-      },
-      ()=>{}
-    );
+    await startScanner();
   }catch(e){
     note.innerHTML='<br>⚠️ 카메라 접근 실패: '+e.message+'<br><br>'+
       '브라우저 설정에서 카메라 권한을 확인해주세요.';
     note.style.color='#e85050';
+  }
+}
+
+// 현재 camFacing으로 스캐너 시작(전환 시 재사용)
+async function startScanner(){
+  scanner=new Html5Qrcode('scanZone');
+  await scanner.start(
+    {facingMode:camFacing},
+    {fps:10,qrbox:{width:260,height:260},aspectRatio:1.0},
+    (text,result)=>{
+      document.getElementById('scanVal').textContent=text;
+      document.getElementById('scanType').textContent=result.result.format?.formatName||'QR/Barcode';
+      document.getElementById('scanResult').style.display='block';
+      toast('스캔 완료: '+text);
+    },
+    ()=>{}
+  );
+}
+
+// 전면/후면 카메라 전환
+async function switchCamera(){
+  camFacing = camFacing==='environment' ? 'user' : 'environment';
+  toast(camFacing==='user' ? '전면 카메라' : '후면 카메라');
+  if(scanner){
+    try{await scanner.stop();}catch(e){}
+    try{await scanner.clear();}catch(e){}
+    scanner=null;
+  }
+  try{
+    await startScanner();
+  }catch(e){
+    // 전환 실패 시(전면 카메라 없음 등) 원래대로 되돌림
+    camFacing = camFacing==='environment' ? 'user' : 'environment';
+    toast('카메라 전환 실패 — 해당 카메라가 없을 수 있어요');
+    try{ await startScanner(); }catch(e2){}
   }
 }
 
@@ -595,8 +620,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v2.2';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v12';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v2.3';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v13';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
