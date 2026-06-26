@@ -140,7 +140,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.0</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.1</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -595,8 +595,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v2.0';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v10';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v2.1';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v11';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -636,7 +636,9 @@ function imageToData(img,angle,scale){
 // 음각/저대비 서비스태그 글씨의 인식 신뢰도를 끌어올림.
 async function enhanceForOCR(file){
   const img=await fileToImage(file);
-  const scale=2;
+  // 작은 글씨는 확대가 도움되지만, 고해상도 사진은 과대 확대 시 매우 느려짐 →
+  // 목표 너비 2400px 기준으로 정규화(0.6~2배 범위).
+  const scale=Math.min(2,Math.max(0.6,2400/img.width));
   const c=document.createElement('canvas');
   c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);
   const ctx=c.getContext('2d');
@@ -681,10 +683,11 @@ async function bandRescue(file,worker){
   try{
     await worker.setParameters({tessedit_pageseg_mode:'7'}); // SINGLE_LINE
     const bands=4,ov=0.5,bh=img.height/bands;
+    // 밴드 확대도 해상도에 맞춰 제한(고해상도 사진에서 12000px 캔버스로 폭주 방지)
+    const sc=Math.min(3,Math.max(1.5,2400/img.width));
     for(let i=0;i<bands;i++){
       const y=Math.max(0,(i-ov)*bh);
       const h=Math.min(img.height-y,bh*(1+2*ov));
-      const sc=3;
       const c=document.createElement('canvas');
       c.width=Math.round(img.width*sc);c.height=Math.round(h*sc);
       c.getContext('2d').drawImage(img,0,y,img.width,h,0,0,c.width,c.height);
@@ -702,21 +705,22 @@ async function bandRescue(file,worker){
 
 async function scanBarcode(file){
   const img=await fileToImage(file);
-  // 4방향(0/90/180/270) x 1배 우선 → 실패 시 2배 확대로 재시도.
-  // 거꾸로 붙은 라벨(180°) 및 작은 바코드 대응.
-  const attempts=[
-    [0,1],[180,1],[90,1],[270,1],
-    [0,2],[180,2],[90,2],[270,2]
-  ];
+  // 중요: 요즘 폰 사진은 4000px+ 라 zbar가 풀해상도에서 오히려 실패함.
+  // 목표 너비(1600/1000/2000px)로 '정규화'한 뒤 4방향 시도 → 인식률↑, 속도↑.
+  const widths=[1600,1000,2000];
+  const angles=[0,180,90,270];
   // 1) zbar-wasm: 1D 바코드 + QR
-  for(const [angle,scale] of attempts){
-    try{
-      const data=imageToData(img,angle,scale);
-      const symbols=await zbarWasm.scanImageData(data);
-      if(symbols&&symbols.length){
-        return symbols.map(s=>({value:s.decode(),type:(s.typeName||'').replace('ZBAR_','')}));
-      }
-    }catch(e){}
+  for(const tw of widths){
+    const scale=tw/img.width;
+    for(const angle of angles){
+      try{
+        const data=imageToData(img,angle,scale);
+        const symbols=await zbarWasm.scanImageData(data);
+        if(symbols&&symbols.length){
+          return symbols.map(s=>({value:s.decode(),type:(s.typeName||'').replace('ZBAR_','')}));
+        }
+      }catch(e){}
+    }
   }
   // 2) ZXing: zbar가 못 읽는 DataMatrix(Dell 서비스태그 등) + QR 보조
   if(window.ZXing){
@@ -726,7 +730,9 @@ async function scanBarcode(file){
       hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
       const reader=new ZXing.MultiFormatReader();
       reader.setHints(hints);
-      for(const [angle,scale] of [[0,2],[0,3],[90,2],[180,2],[270,2]]){
+      for(const tw of [1600,1000,2400]){
+        const scale=tw/img.width;
+        for(const angle of angles){
         try{
           const data=imageToData(img,angle,scale);
           const lum=new Uint8ClampedArray(data.width*data.height);
@@ -743,6 +749,7 @@ async function scanBarcode(file){
             }catch(e){}
           }
         }catch(e){}
+        }
       }
     }catch(e){}
   }
