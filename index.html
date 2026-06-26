@@ -138,6 +138,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v1.4</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -456,17 +457,26 @@ async function runBatchOCR(){
           }
         });
 
-        const {data}=await worker.recognize(item.file);
-        await worker.terminate();
-
-        const words=data.words
-          .filter(w=>w.text.length>=2 && /[A-Za-z0-9]/.test(w.text))
-          .map(w=>({
-            text:w.text.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
-            conf:Math.round(w.confidence)
-          }))
+        const parseWords=d=>d.words
+          .filter(w=>w.confidence>=50 && w.text.length>=2 && /[A-Za-z0-9]/.test(w.text))
+          .map(w=>({text:w.text.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),conf:Math.round(w.confidence)}))
           .filter(w=>w.text.length>=2);
 
+        const {data}=await worker.recognize(item.file);
+        let words=parseWords(data);
+
+        // 인식 결과가 없거나 평균 신뢰도 낮으면 180도 회전 후 재시도
+        const avgConf=words.length?words.reduce((s,w)=>s+w.conf,0)/words.length:0;
+        if(words.length===0||avgConf<60){
+          item.status='회전 후 재인식 중...';renderQueue();
+          const rotated=await rotateImage180(item.file);
+          const {data:data2}=await worker.recognize(rotated);
+          const words2=parseWords(data2);
+          const avg2=words2.length?words2.reduce((s,w)=>s+w.conf,0)/words2.length:0;
+          if(avg2>avgConf) words=words2;
+        }
+
+        await worker.terminate();
         const unique=[...new Map(words.map(w=>[w.text,w])).values()];
         item.words=unique;
         item.status='텍스트 인식 완료 ('+unique.length+'개)';
@@ -544,6 +554,41 @@ function doInstall(){
   deferP.prompt();
   deferP.userChoice.then(()=>{deferP=null;
     document.getElementById('instBanner').style.display='none';});
+}
+
+// ===== 버전 확인 =====
+const APP_VER='v1.4';
+async function checkUpdate(){
+  try{
+    const r=await fetch('sw.js?_='+Date.now());
+    const txt=await r.text();
+    const m=txt.match(/CACHE\s*=\s*['"]barcode-(v[\d]+)['"]/);
+    const serverVer=m?m[1]:null;
+    const localVer=APP_VER.replace('v','');
+    if(serverVer && serverVer!==localVer){
+      toast('새 버전 있음 ('+serverVer+') — 앱 재시작하세요');
+    }else{
+      toast('최신 버전 사용 중 ('+APP_VER+')');
+    }
+  }catch(e){toast('버전 확인 실패 (오프라인?)');}
+}
+
+// ===== 이미지 180도 회전 =====
+function rotateImage180(file){
+  return new Promise(resolve=>{
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{
+      const c=document.createElement('canvas');
+      c.width=img.width;c.height=img.height;
+      const ctx=c.getContext('2d');
+      ctx.translate(c.width,c.height);ctx.rotate(Math.PI);
+      ctx.drawImage(img,0,0);
+      c.toBlob(b=>resolve(new File([b],file.name,{type:'image/jpeg'})),'image/jpeg',0.95);
+      URL.revokeObjectURL(url);
+    };
+    img.src=url;
+  });
 }
 
 // 온/오프라인 표시
