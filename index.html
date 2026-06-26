@@ -140,7 +140,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v1.9</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.0</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -378,10 +378,13 @@ function renderQueue(){
     div.className='oq-item';
     let wordsHtml='';
     if(item.words.length){
-      wordsHtml='<div class="chip-list">'+item.words.map(w=>
-        '<span class="chip'+(w.isBc?' sel':'')+'" onclick="pickWord(\''+w.text+'\')">'+(w.isBc?'📊 ':'')+w.text+
-        ' <span class="c">'+(w.isBc?'바코드':w.conf+'%')+'</span></span>'
-      ).join('')+'</div>';
+      wordsHtml='<div class="chip-list">'+item.words.map(w=>{
+        const hi=w.isBc||w.derived;
+        const icon=w.isBc?'📊 ':(w.derived?'🔑 ':'');
+        const label=w.isBc?'바코드':(w.derived?'코드변환':w.conf+'%');
+        return '<span class="chip'+(hi?' sel':'')+'" onclick="pickWord(\''+w.text+'\')">'+icon+w.text+
+          ' <span class="c">'+label+'</span></span>';
+      }).join('')+'</div>';
     }
     div.innerHTML=
       '<img src="'+item.url+'">'+
@@ -502,6 +505,16 @@ async function runBatchOCR(){
         }
 
         await worker.terminate();
+
+        // Dell 보정: Express Service Code(순수 숫자)는 Service Tag를 10진수로 표현한 값.
+        // 36진수로 역변환하면 정확한 Service Tag가 나옴 → OCR의 8↔B,5↔S 혼동을 우회.
+        for(const w of [...words]){
+          if(/^\d{9,12}$/.test(w.text)){
+            const tag=expressToServiceTag(w.text);
+            if(tag) words.unshift({text:tag,conf:99,derived:true,tagLike:true});
+          }
+        }
+
         const unique=[...new Map(words.map(w=>[w.text,w])).values()];
         item.words=unique;
         item.status='텍스트 인식 완료 ('+unique.length+'개)';
@@ -582,8 +595,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v1.9';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v9';     // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v2.0';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v10';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -643,6 +656,21 @@ async function enhanceForOCR(file){
   }
   ctx.putImageData(id,0,0);
   return c;
+}
+
+// ===== Dell: Express Service Code(10진수) → Service Tag(36진수) 역변환 =====
+// 18798538863 → 8MW5XF3. 순수 숫자는 OCR이 정확히 읽으므로 태그를 100% 정확히 도출.
+function expressToServiceTag(numStr){
+  if(!/^\d{9,12}$/.test(numStr)) return null;
+  try{
+    let n=BigInt(numStr);
+    if(n<=0n) return null;
+    const D='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let s='';
+    while(n>0n){ s=D[Number(n%36n)]+s; n=n/36n; }
+    if(s.length<5||s.length>8) return null; // Dell 서비스태그는 보통 7자
+    return s;
+  }catch(e){ return null; }
 }
 
 // ===== 줄 단위 OCR 보강: 가로 밴드 분할 + SINGLE_LINE =====
