@@ -13,7 +13,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
-<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/inlined/index.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0e0;
@@ -139,7 +139,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v1.4</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v1.6</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -427,32 +427,21 @@ async function runBatchOCR(){
     txt.textContent='('+(i+1)+'/'+ocrFiles.length+') '+item.file.name+' 인식 중...';
 
     try{
-      // 1차: ZXing으로 바코드/QR 인식 (0°/90°/180°/270° 4방향 시도)
+      // 1차: zbar-wasm으로 바코드/QR 인식 (0°/90° + 2배 확대 재시도)
       let bcDetected=false;
       try{
-        const zxing=new ZXing.BrowserMultiFormatReader();
-        const angles=[0,90,180,270];
-        for(const angle of angles){
-          try{
-            const rotFile=angle===0?item.file:await rotateImageByAngle(item.file,angle);
-            const imgEl=document.createElement('img');
-            imgEl.src=URL.createObjectURL(rotFile);
-            await new Promise(r=>{imgEl.onload=r;imgEl.onerror=r;});
-            const result=await zxing.decodeFromImageElement(imgEl);
-            URL.revokeObjectURL(imgEl.src);
-            if(result&&result.getText()){
-              const raw=result.getText();
-              const cleaned=raw.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase();
-              if(cleaned.length>=2){
-                item.words=[{text:cleaned,conf:100,isBc:true,bcType:result.getBarcodeFormat?String(result.getBarcodeFormat()):''}];
-                item.status='바코드/QR 인식 완료'+(angle?` (${angle}° 회전)`:'');
-                bcDetected=true;
-                break;
-              }
-            }
-          }catch(e2){}
+        const symbols=await scanBarcode(item.file);
+        if(symbols.length){
+          item.words=symbols.map(s=>({
+            text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+            conf:100,isBc:true,bcType:s.type
+          })).filter(w=>w.text.length>=2);
+          if(item.words.length){
+            item.status='바코드/QR 인식 완료 ('+item.words.length+'개)';
+            bcDetected=true;
+          }
         }
-      }catch(zxErr){}
+      }catch(zbErr){}
 
       // 2차: 바코드 미감지 시 OCR (0°/180° 시도)
       if(!bcDetected){
@@ -564,20 +553,57 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v1.5';
+const APP_VER='v1.6';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v6';     // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
-    const r=await fetch('sw.js?_='+Date.now());
+    const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
     const txt=await r.text();
-    const m=txt.match(/CACHE\s*=\s*['"]barcode-(v[\d]+)['"]/);
-    const serverVer=m?m[1]:null;
-    const localVer=APP_VER.replace('v','');
-    if(serverVer && serverVer!==localVer){
-      toast('새 버전 있음 ('+serverVer+') — 앱 재시작하세요');
+    const m=txt.match(/CACHE\s*=\s*['"](barcode-v[\d]+)['"]/);
+    const serverCache=m?m[1]:null;
+    if(serverCache && serverCache!==BUILD_CACHE){
+      toast('새 버전 있음 ('+serverCache+') — 앱 완전 종료 후 재실행');
     }else{
-      toast('최신 버전 사용 중 ('+APP_VER+')');
+      toast('최신 버전 ('+APP_VER+' / '+BUILD_CACHE+')');
     }
   }catch(e){toast('버전 확인 실패 (오프라인?)');}
+}
+
+// ===== zbar-wasm 바코드/QR 디코딩 =====
+// 파일 -> 캔버스 ImageData(각도/배율) -> zbar 스캔. 첫 적중에서 반환.
+function fileToImage(file){
+  return new Promise((resolve,reject)=>{
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{URL.revokeObjectURL(url);resolve(img);};
+    img.onerror=e=>{URL.revokeObjectURL(url);reject(e);};
+    img.src=url;
+  });
+}
+function imageToData(img,angle,scale){
+  const swap=angle===90||angle===270;
+  const w=Math.round((swap?img.height:img.width)*scale);
+  const h=Math.round((swap?img.width:img.height)*scale);
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const ctx=c.getContext('2d');
+  ctx.translate(w/2,h/2);ctx.rotate(angle*Math.PI/180);
+  ctx.drawImage(img,-img.width*scale/2,-img.height*scale/2,img.width*scale,img.height*scale);
+  return ctx.getImageData(0,0,w,h);
+}
+async function scanBarcode(file){
+  const img=await fileToImage(file);
+  // 0°/90° 기본, 실패 시 2배 확대로 재시도 (작은 바코드 대응)
+  const attempts=[[0,1],[90,1],[0,2],[90,2]];
+  for(const [angle,scale] of attempts){
+    try{
+      const data=imageToData(img,angle,scale);
+      const symbols=await zbarWasm.scanImageData(data);
+      if(symbols&&symbols.length){
+        return symbols.map(s=>({value:s.decode(),type:(s.typeName||'').replace('ZBAR_','')}));
+      }
+    }catch(e){}
+  }
+  return [];
 }
 
 // ===== 이미지 각도 회전 (0/90/180/270) =====
