@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0078d4">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>Service Tag Barcode</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0e0;
+  min-height:100vh;min-height:100dvh;overflow-x:hidden;padding-bottom:80px}
+
+/* 헤더 */
+.hdr{background:#0078d4;padding:14px 20px;display:flex;align-items:center;gap:10px;
+  position:sticky;top:0;z-index:100}
+.hdr h1{font-size:16px;font-weight:600;color:#fff;flex:1}
+.hdr .tag{font-size:10px;background:rgba(255,255,255,.2);padding:2px 8px;border-radius:10px;color:rgba(255,255,255,.8)}
+
+.wrap{max-width:500px;margin:0 auto;padding:16px}
+
+/* 네비게이션 탭 */
+.nav{display:flex;background:#1a1a1a;border-radius:14px;padding:4px;margin-bottom:20px;gap:0}
+.nav button{flex:1;padding:11px 4px;font-size:12px;background:transparent;color:#666;border:none;
+  border-radius:11px;cursor:pointer;font-weight:500;transition:.2s}
+.nav button.on{background:#0078d4;color:#fff}
+
+.page{display:none}.page.on{display:block}
+
+/* 공통 버튼 */
+.btn{padding:13px 22px;font-size:14px;background:#0078d4;color:#fff;border:none;border-radius:12px;
+  cursor:pointer;font-weight:600;transition:.15s}
+.btn:active{transform:scale(.96);opacity:.9}
+.btn-s{padding:9px 16px;font-size:12px;background:#252525;color:#bbb;border:1px solid #444;
+  border-radius:10px;cursor:pointer;transition:.2s}
+.btn-s:active{background:#333}
+.btn-full{width:100%}
+
+/* 포맷 */
+.fmts{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+.fm{padding:7px 14px;font-size:11px;background:#1a1a1a;color:#777;border:1px solid #333;
+  border-radius:8px;cursor:pointer;transition:.2s}
+.fm.on{background:#0078d4;color:#fff;border-color:#0078d4}
+
+/* 입력 */
+.irow{display:flex;gap:10px;margin-bottom:18px}
+.irow input{flex:1;padding:13px 14px;font-size:18px;font-family:Consolas,monospace;
+  background:#1a1a1a;border:2px solid #333;border-radius:12px;color:#fff;
+  letter-spacing:3px;text-transform:uppercase;outline:none}
+.irow input:focus{border-color:#0078d4}
+.irow input::placeholder{color:#444;letter-spacing:1px;text-transform:none;font-size:14px}
+
+/* 바코드 카드 */
+.bc-card{background:#fff;border-radius:14px;padding:24px 16px;text-align:center;
+  box-shadow:0 6px 28px rgba(0,0,0,.5);margin-bottom:14px}
+.bc-card svg{display:block;margin:0 auto;max-width:100%}
+.bc-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:20px}
+
+/* 권한 안내 */
+.perm-box{background:#1e1e1e;border:1px solid #333;border-radius:14px;padding:28px 20px;
+  text-align:center;margin-bottom:20px}
+.perm-box .icon{font-size:48px;margin-bottom:14px}
+.perm-box p{color:#999;font-size:14px;line-height:1.6;margin-bottom:16px}
+.perm-box .note{font-size:12px;color:#666;margin-top:12px}
+
+/* 스캔 영역 */
+#scanZone{width:100%;border-radius:14px;overflow:hidden;margin-bottom:16px;min-height:250px;background:#000}
+#scanZone video{border-radius:14px}
+
+.scan-result{background:#1a1a1a;border:1px solid #333;border-radius:12px;padding:16px;
+  margin-bottom:16px;text-align:center}
+.scan-result .val{font-family:Consolas,monospace;font-size:20px;color:#0078d4;
+  letter-spacing:2px;margin:8px 0}
+.scan-result .type{font-size:11px;color:#666;text-transform:uppercase}
+
+/* OCR 영역 */
+.ocr-upload{border:2px dashed #333;border-radius:14px;padding:32px 16px;text-align:center;
+  cursor:pointer;margin-bottom:16px;transition:.2s;position:relative}
+.ocr-upload:active{border-color:#0078d4;background:rgba(0,120,212,.04)}
+.ocr-upload input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.ocr-upload .icon{font-size:36px;margin-bottom:10px}
+.ocr-upload p{color:#777;font-size:14px}
+.ocr-upload .sub{color:#555;font-size:11px;margin-top:6px}
+
+.ocr-queue{margin-bottom:16px}
+.oq-item{background:#1a1a1a;border:1px solid #333;border-radius:10px;padding:12px 14px;
+  margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.oq-item img{width:48px;height:48px;object-fit:cover;border-radius:6px}
+.oq-item .info{flex:1;min-width:0}
+.oq-item .name{font-size:13px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.oq-item .status{font-size:11px;color:#666;margin-top:2px}
+.oq-item .result{font-family:Consolas,monospace;font-size:14px;color:#0078d4;margin-top:4px;cursor:pointer}
+.oq-item .result:active{text-decoration:underline}
+
+.chip-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;
+  background:#252525;border:1px solid #444;border-radius:8px;cursor:pointer;
+  font-family:Consolas,monospace;font-size:14px;color:#ddd;transition:.2s}
+.chip:active,.chip.sel{border-color:#0078d4;background:rgba(0,120,212,.15);color:#fff}
+.chip .c{font-size:9px;color:#555;background:#1a1a1a;padding:1px 5px;border-radius:3px}
+
+/* 진행 */
+.prog{width:100%;height:5px;background:#282828;border-radius:3px;overflow:hidden;margin:10px 0}
+.prog .bar{height:100%;background:#0078d4;border-radius:3px;transition:width .3s;width:0}
+.ptext{font-size:12px;color:#666;text-align:center}
+
+/* 일괄 */
+.sep{font-size:12px;color:#555;margin:24px 0 10px;padding-top:18px;border-top:1px solid #222}
+textarea{width:100%;height:90px;padding:12px;font-family:Consolas,monospace;font-size:13px;
+  background:#1a1a1a;border:2px solid #333;border-radius:12px;color:#fff;outline:none;
+  resize:vertical;margin-bottom:10px}
+textarea::placeholder{color:#444}
+
+.multi-card{background:#fff;border-radius:12px;padding:18px 14px;margin-bottom:10px;
+  text-align:center;box-shadow:0 3px 14px rgba(0,0,0,.4)}
+
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;
+  color:#fff;padding:10px 24px;border-radius:10px;font-size:13px;z-index:300;
+  opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+
+/* 설치 배너 */
+.inst{position:fixed;bottom:0;left:0;right:0;background:#0078d4;color:#fff;
+  padding:12px 16px;display:none;align-items:center;justify-content:space-between;z-index:200;font-size:13px}
+.inst button{background:#fff;color:#0078d4;border:none;padding:8px 18px;border-radius:8px;
+  font-weight:600;cursor:pointer}
+.inst .x{background:transparent;color:rgba(255,255,255,.7);padding:6px;font-size:18px}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <h1>Service Tag Barcode</h1>
+  <span class="tag" id="connTag">OFFLINE</span>
+</div>
+
+<div class="wrap">
+  <!-- 네비게이션 -->
+  <div class="nav">
+    <button class="on" onclick="go('gen',this)">바코드 생성</button>
+    <button onclick="go('scan',this)">QR/바코드 스캔</button>
+    <button onclick="go('ocr',this)">사진 OCR</button>
+  </div>
+
+  <!-- ========== 1. 바코드 생성 ========== -->
+  <div class="page on" id="pg-gen">
+    <div class="fmts">
+      <button class="fm on" data-f="CODE128" onclick="sf(this)">Code 128</button>
+      <button class="fm" data-f="CODE39" onclick="sf(this)">Code 39</button>
+      <button class="fm" data-f="codabar" onclick="sf(this)">Codabar</button>
+    </div>
+    <div class="irow">
+      <input type="text" id="tagIn" placeholder="Service Tag 입력" value="BJ22XF3">
+      <button class="btn" onclick="mkBC()">생성</button>
+    </div>
+    <div id="bcOut"></div>
+
+    <div class="sep">일괄 생성 (줄바꿈 구분)</div>
+    <textarea id="batchIn" placeholder="BJ22XF3&#10;ABC1234&#10;XYZ5678"></textarea>
+    <button class="btn btn-full" onclick="mkBatch()">일괄 생성</button>
+  </div>
+
+  <!-- ========== 2. QR/바코드 스캔 ========== -->
+  <div class="page" id="pg-scan">
+    <div class="perm-box" id="scanPerm">
+      <div class="icon">📸</div>
+      <p>QR코드 또는 바코드를 카메라로 스캔합니다.<br>카메라 접근 권한이 필요합니다.</p>
+      <button class="btn" onclick="startScan()">카메라 권한 허용 & 스캔 시작</button>
+      <div class="note" id="scanPermNote"></div>
+    </div>
+
+    <div id="scanActive" style="display:none">
+      <div id="scanZone"></div>
+      <div class="scan-result" id="scanResult" style="display:none">
+        <div class="type" id="scanType"></div>
+        <div class="val" id="scanVal"></div>
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:10px">
+          <button class="btn-s" onclick="scanToBarcode()">바코드 생성</button>
+          <button class="btn-s" onclick="copyVal()">복사</button>
+        </div>
+      </div>
+      <div style="text-align:center">
+        <button class="btn-s" onclick="stopScan()">스캔 중지</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 3. 사진 OCR ========== -->
+  <div class="page" id="pg-ocr">
+    <div class="ocr-upload" id="ocrUpload">
+      <input type="file" accept="image/*" multiple onchange="addPhotos(event)">
+      <div class="icon">🖼️</div>
+      <p>사진을 선택하세요 (복수 선택 가능)</p>
+      <div class="sub">카메라 촬영 또는 갤러리에서 선택</div>
+    </div>
+
+    <div class="ocr-queue" id="ocrQueue"></div>
+
+    <button class="btn btn-full" id="ocrStartBtn" style="display:none" onclick="runBatchOCR()">
+      전체 인식 시작
+    </button>
+
+    <div class="prog" id="ocrProg" style="display:none">
+      <div class="bar" id="ocrBar"></div>
+    </div>
+    <div class="ptext" id="ocrText" style="display:none"></div>
+
+    <div id="ocrBcOut"></div>
+  </div>
+</div>
+
+<!-- 토스트 -->
+<div class="toast" id="toast"></div>
+
+<!-- 설치 배너 -->
+<div class="inst" id="instBanner">
+  <span>홈 화면에 추가</span>
+  <div>
+    <button onclick="doInstall()">설치</button>
+    <button class="x" onclick="this.parentElement.parentElement.style.display='none'">✕</button>
+  </div>
+</div>
+
+<script>
+// ===== 전역 =====
+let fmt='CODE128', scanner=null, deferP=null;
+const ocrFiles=[];
+
+// ===== 네비 =====
+function go(name,btn){
+  document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('on'));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('pg-'+name).classList.add('on');
+  if(name!=='scan' && scanner) stopScan();
+}
+
+function sf(b){
+  document.querySelectorAll('.fm').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  fmt=b.dataset.f;
+}
+
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2000);
+}
+
+// ===== 카메라 권한 체크 =====
+async function checkCamPermission(){
+  try{
+    const result=await navigator.permissions.query({name:'camera'});
+    return result.state; // 'granted','denied','prompt'
+  }catch(e){return 'prompt';}
+}
+
+// ===== 1. 바코드 생성 =====
+function mkBC(){
+  const tag=document.getElementById('tagIn').value.trim().toUpperCase();
+  if(!tag)return;
+  const o=document.getElementById('bcOut');
+  o.innerHTML='<div class="bc-card"><svg id="bcSvg"></svg></div>'+
+    '<div class="bc-actions">'+
+    '<button class="btn-s" onclick="dlPNG()">PNG 저장</button>'+
+    '<button class="btn-s" onclick="dlSVG()">SVG 저장</button>'+
+    '<button class="btn-s" onclick="sharePNG()">공유</button></div>';
+  JsBarcode('#bcSvg',tag,{format:fmt,width:2,height:80,displayValue:true,
+    fontSize:18,font:"Consolas,monospace",margin:10,background:'#fff',lineColor:'#000'});
+}
+
+function mkBatch(){
+  const lines=document.getElementById('batchIn').value.split('\n').map(l=>l.trim().toUpperCase()).filter(l=>l);
+  if(!lines.length)return;
+  const o=document.getElementById('bcOut');o.innerHTML='';
+  lines.forEach((tag,i)=>{
+    const d=document.createElement('div');d.className='multi-card';
+    d.innerHTML='<svg id="b_'+i+'"></svg>';o.appendChild(d);
+    JsBarcode('#b_'+i,tag,{format:fmt,width:2,height:55,displayValue:true,
+      fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'});
+  });
+}
+
+// ===== 2. QR/바코드 스캔 =====
+async function startScan(){
+  const note=document.getElementById('scanPermNote');
+  const perm=await checkCamPermission();
+
+  if(perm==='denied'){
+    note.innerHTML='<br>⚠️ 카메라 권한이 거부되었습니다.<br><br>'+
+      '<b>Android:</b> 설정 → 앱 → 브라우저 → 권한 → 카메라 → 허용<br>'+
+      '<b>Chrome:</b> 주소창 왼쪽 🔒 아이콘 → 카메라 → 허용';
+    note.style.color='#e85050';
+    return;
+  }
+
+  try{
+    // 권한 요청 테스트
+    const testStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    testStream.getTracks().forEach(t=>t.stop());
+
+    document.getElementById('scanPerm').style.display='none';
+    document.getElementById('scanActive').style.display='block';
+
+    scanner=new Html5Qrcode('scanZone');
+    await scanner.start(
+      {facingMode:'environment'},
+      {fps:10,qrbox:{width:260,height:260},aspectRatio:1.0},
+      (text,result)=>{
+        document.getElementById('scanVal').textContent=text;
+        document.getElementById('scanType').textContent=result.result.format?.formatName||'QR/Barcode';
+        document.getElementById('scanResult').style.display='block';
+        toast('스캔 완료: '+text);
+      },
+      ()=>{}
+    );
+  }catch(e){
+    note.innerHTML='<br>⚠️ 카메라 접근 실패: '+e.message+'<br><br>'+
+      '브라우저 설정에서 카메라 권한을 확인해주세요.';
+    note.style.color='#e85050';
+  }
+}
+
+async function stopScan(){
+  if(scanner){
+    try{await scanner.stop();}catch(e){}
+    scanner=null;
+  }
+  document.getElementById('scanPerm').style.display='block';
+  document.getElementById('scanActive').style.display='none';
+  document.getElementById('scanResult').style.display='none';
+}
+
+function scanToBarcode(){
+  const val=document.getElementById('scanVal').textContent;
+  document.getElementById('tagIn').value=val;
+  go('gen',document.querySelectorAll('.nav button')[0]);
+  mkBC();
+  toast('바코드 생성됨');
+}
+
+function copyVal(){
+  const val=document.getElementById('scanVal').textContent;
+  navigator.clipboard.writeText(val).then(()=>toast('복사됨: '+val));
+}
+
+// ===== 3. 사진 OCR =====
+function addPhotos(e){
+  const files=Array.from(e.target.files);
+  if(!files.length)return;
+
+  files.forEach(f=>{
+    const id='ocr_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+    const url=URL.createObjectURL(f);
+    ocrFiles.push({id,file:f,url,status:'대기',words:[]});
+  });
+
+  renderQueue();
+  document.getElementById('ocrStartBtn').style.display='block';
+  e.target.value='';
+}
+
+function renderQueue(){
+  const q=document.getElementById('ocrQueue');
+  q.innerHTML='';
+  ocrFiles.forEach((item,idx)=>{
+    const div=document.createElement('div');
+    div.className='oq-item';
+    let wordsHtml='';
+    if(item.words.length){
+      wordsHtml='<div class="chip-list">'+item.words.map(w=>
+        '<span class="chip" onclick="pickWord(\''+w.text+'\')">'+w.text+
+        ' <span class="c">'+w.conf+'%</span></span>'
+      ).join('')+'</div>';
+    }
+    div.innerHTML=
+      '<img src="'+item.url+'">'+
+      '<div class="info">'+
+        '<div class="name">'+(item.file.name||'사진 '+(idx+1))+'</div>'+
+        '<div class="status">'+item.status+'</div>'+
+        wordsHtml+
+      '</div>'+
+      '<button class="btn-s" onclick="removeOcr('+idx+')" style="padding:6px 10px;font-size:11px">✕</button>';
+    q.appendChild(div);
+  });
+}
+
+function removeOcr(idx){
+  ocrFiles.splice(idx,1);
+  renderQueue();
+  if(!ocrFiles.length) document.getElementById('ocrStartBtn').style.display='none';
+}
+
+function pickWord(text){
+  document.getElementById('tagIn').value=text;
+  go('gen',document.querySelectorAll('.nav button')[0]);
+  mkBC();
+  toast('바코드 생성: '+text);
+}
+
+async function runBatchOCR(){
+  const prog=document.getElementById('ocrProg');
+  const bar=document.getElementById('ocrBar');
+  const txt=document.getElementById('ocrText');
+  prog.style.display='block';
+  txt.style.display='block';
+  document.getElementById('ocrStartBtn').disabled=true;
+
+  for(let i=0;i<ocrFiles.length;i++){
+    const item=ocrFiles[i];
+    if(item.status!=='대기'){
+      bar.style.width=((i+1)/ocrFiles.length*100)+'%';
+      continue;
+    }
+
+    item.status='인식 중...';
+    renderQueue();
+    txt.textContent='('+(i+1)+'/'+ocrFiles.length+') '+item.file.name+' 인식 중...';
+
+    try{
+      const worker=await Tesseract.createWorker('eng',1,{
+        logger:m=>{
+          if(m.status==='recognizing text'){
+            const pct=Math.round(m.progress*100);
+            bar.style.width=((i+pct/100)/ocrFiles.length*100)+'%';
+          }
+        }
+      });
+
+      const {data}=await worker.recognize(item.file);
+      await worker.terminate();
+
+      const words=data.words
+        .filter(w=>w.text.length>=2 && /[A-Za-z0-9]/.test(w.text))
+        .map(w=>({
+          text:w.text.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+          conf:Math.round(w.confidence)
+        }))
+        .filter(w=>w.text.length>=2);
+
+      const unique=[...new Map(words.map(w=>[w.text,w])).values()];
+      item.words=unique;
+      item.status='완료 ('+unique.length+'개 인식)';
+    }catch(e){
+      item.status='오류: '+e.message;
+    }
+
+    bar.style.width=((i+1)/ocrFiles.length*100)+'%';
+    renderQueue();
+  }
+
+  txt.textContent='전체 인식 완료!';
+  document.getElementById('ocrStartBtn').disabled=false;
+  document.getElementById('ocrStartBtn').textContent='다시 인식';
+
+  // 자동으로 일괄 바코드 생성
+  const allWords=ocrFiles.flatMap(f=>f.words).map(w=>w.text);
+  const uniqueAll=[...new Set(allWords)];
+  if(uniqueAll.length){
+    const out=document.getElementById('ocrBcOut');
+    out.innerHTML='<div class="sep">인식된 태그 바코드</div>';
+    uniqueAll.forEach((tag,i)=>{
+      const d=document.createElement('div');d.className='multi-card';
+      d.innerHTML='<svg id="ob_'+i+'"></svg>';out.appendChild(d);
+      JsBarcode('#ob_'+i,tag,{format:fmt,width:2,height:55,displayValue:true,
+        fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'});
+    });
+  }
+}
+
+// ===== 다운로드/공유 =====
+function svg2canvas(cb){
+  const svg=document.getElementById('bcSvg');
+  const d=new XMLSerializer().serializeToString(svg);
+  const c=document.createElement('canvas');const ctx=c.getContext('2d');
+  const img=new Image();
+  img.onload=function(){
+    c.width=img.width*2;c.height=img.height*2;
+    ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);
+    ctx.drawImage(img,0,0,c.width,c.height);cb(c);
+  };
+  img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(d)));
+}
+function dlPNG(){svg2canvas(c=>{
+  const a=document.createElement('a');
+  a.download=document.getElementById('tagIn').value.trim()+'.png';
+  a.href=c.toDataURL('image/png');a.click();
+})}
+function dlSVG(){
+  const svg=document.getElementById('bcSvg');
+  const d=new XMLSerializer().serializeToString(svg);
+  const b=new Blob([d],{type:'image/svg+xml'});
+  const a=document.createElement('a');
+  a.download=document.getElementById('tagIn').value.trim()+'.svg';
+  a.href=URL.createObjectURL(b);a.click();
+}
+function sharePNG(){svg2canvas(c=>{
+  c.toBlob(async b=>{
+    const f=new File([b],'barcode.png',{type:'image/png'});
+    if(navigator.share){
+      try{await navigator.share({files:[f],title:'Barcode'});}
+      catch(e){dlPNG();}
+    }else dlPNG();
+  });
+})}
+
+// ===== PWA 설치 =====
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();deferP=e;
+  document.getElementById('instBanner').style.display='flex';
+});
+function doInstall(){
+  if(!deferP)return;
+  deferP.prompt();
+  deferP.userChoice.then(()=>{deferP=null;
+    document.getElementById('instBanner').style.display='none';});
+}
+
+// 온/오프라인 표시
+function updateConn(){
+  document.getElementById('connTag').textContent=navigator.onLine?'ONLINE':'OFFLINE';
+}
+window.addEventListener('online',updateConn);
+window.addEventListener('offline',updateConn);
+updateConn();
+
+// SW 등록
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+
+// 초기
+mkBC();
+</script>
+</body>
+</html>
