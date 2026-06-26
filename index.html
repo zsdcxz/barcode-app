@@ -376,8 +376,8 @@ function renderQueue(){
     let wordsHtml='';
     if(item.words.length){
       wordsHtml='<div class="chip-list">'+item.words.map(w=>
-        '<span class="chip" onclick="pickWord(\''+w.text+'\')">'+w.text+
-        ' <span class="c">'+w.conf+'%</span></span>'
+        '<span class="chip'+(w.isBc?' sel':'')+'" onclick="pickWord(\''+w.text+'\')">'+(w.isBc?'📊 ':'')+w.text+
+        ' <span class="c">'+(w.isBc?'바코드':w.conf+'%')+'</span></span>'
       ).join('')+'</div>';
     }
     div.innerHTML=
@@ -425,29 +425,52 @@ async function runBatchOCR(){
     txt.textContent='('+(i+1)+'/'+ocrFiles.length+') '+item.file.name+' 인식 중...';
 
     try{
-      const worker=await Tesseract.createWorker('eng',1,{
-        logger:m=>{
-          if(m.status==='recognizing text'){
-            const pct=Math.round(m.progress*100);
-            bar.style.width=((i+pct/100)/ocrFiles.length*100)+'%';
+      // 1차: 바코드/QR 인식 시도
+      let bcDetected=false;
+      try{
+        const tmpId='__qr_tmp__';
+        if(!document.getElementById(tmpId)){
+          const el=document.createElement('div');el.id=tmpId;el.style.display='none';
+          document.body.appendChild(el);
+        }
+        const qr=new Html5Qrcode(tmpId,{verbose:false});
+        const qrResult=await qr.scanFile(item.file,false);
+        if(qrResult){
+          const cleaned=qrResult.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase();
+          if(cleaned.length>=2){
+            item.words=[{text:cleaned, conf:100, isBc:true}];
+            item.status='바코드/QR 인식 완료';
+            bcDetected=true;
           }
         }
-      });
+      }catch(qrErr){}
 
-      const {data}=await worker.recognize(item.file);
-      await worker.terminate();
+      // 2차: 바코드 미감지 시 OCR
+      if(!bcDetected){
+        const worker=await Tesseract.createWorker('eng',1,{
+          logger:m=>{
+            if(m.status==='recognizing text'){
+              const pct=Math.round(m.progress*100);
+              bar.style.width=((i+pct/100)/ocrFiles.length*100)+'%';
+            }
+          }
+        });
 
-      const words=data.words
-        .filter(w=>w.text.length>=2 && /[A-Za-z0-9]/.test(w.text))
-        .map(w=>({
-          text:w.text.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
-          conf:Math.round(w.confidence)
-        }))
-        .filter(w=>w.text.length>=2);
+        const {data}=await worker.recognize(item.file);
+        await worker.terminate();
 
-      const unique=[...new Map(words.map(w=>[w.text,w])).values()];
-      item.words=unique;
-      item.status='완료 ('+unique.length+'개 인식)';
+        const words=data.words
+          .filter(w=>w.text.length>=2 && /[A-Za-z0-9]/.test(w.text))
+          .map(w=>({
+            text:w.text.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+            conf:Math.round(w.confidence)
+          }))
+          .filter(w=>w.text.length>=2);
+
+        const unique=[...new Map(words.map(w=>[w.text,w])).values()];
+        item.words=unique;
+        item.status='텍스트 인식 완료 ('+unique.length+'개)';
+      }
     }catch(e){
       item.status='오류: '+e.message;
     }
