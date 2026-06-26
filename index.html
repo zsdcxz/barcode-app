@@ -139,7 +139,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v1.6</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v1.7</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -553,8 +553,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v1.6';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v6';     // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v1.7';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v7';     // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -592,8 +592,12 @@ function imageToData(img,angle,scale){
 }
 async function scanBarcode(file){
   const img=await fileToImage(file);
-  // 0°/90° 기본, 실패 시 2배 확대로 재시도 (작은 바코드 대응)
-  const attempts=[[0,1],[90,1],[0,2],[90,2]];
+  // 4방향(0/90/180/270) x 1배 우선 → 실패 시 2배 확대로 재시도.
+  // 거꾸로 붙은 라벨(180°) 및 작은 바코드 대응.
+  const attempts=[
+    [0,1],[180,1],[90,1],[270,1],
+    [0,2],[180,2],[90,2],[270,2]
+  ];
   for(const [angle,scale] of attempts){
     try{
       const data=imageToData(img,angle,scale);
