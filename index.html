@@ -186,7 +186,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.0</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.1</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -939,8 +939,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.0';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v20';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.1';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v21';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1131,8 +1131,35 @@ window.addEventListener('online',updateConn);
 window.addEventListener('offline',updateConn);
 updateConn();
 
-// SW 등록
-if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+// SW 등록 + 자동 업데이트(새 버전 감지 시 적용 후 1회 새로고침)
+if('serviceWorker' in navigator){
+  let refreshing=false;
+  // 새 워커가 제어권을 가져오면 한 번만 새로고침 → 최신 버전 즉시 반영
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(refreshing) return;
+    refreshing=true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js').then(reg=>{
+    // 페이지 열릴 때마다 업데이트 확인
+    reg.update();
+    reg.addEventListener('updatefound',()=>{
+      const nw=reg.installing;
+      if(!nw) return;
+      nw.addEventListener('statechange',()=>{
+        // 새 워커 설치 완료 + 기존 컨트롤러 존재 → 즉시 활성화 요청
+        if(nw.state==='installed' && navigator.serviceWorker.controller){
+          nw.postMessage('SKIP_WAITING');
+        }
+      });
+    });
+  });
+  // 앱 복귀(백그라운드→포그라운드) 시에도 업데이트 확인
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible')
+      navigator.serviceWorker.getRegistration().then(r=>r&&r.update());
+  });
+}
 
 // 초기
 mkBC();
