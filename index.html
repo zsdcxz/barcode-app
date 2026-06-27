@@ -72,9 +72,13 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
 .perm-box p{color:#999;font-size:14px;line-height:1.6;margin-bottom:16px}
 .perm-box .note{font-size:12px;color:#666;margin-top:12px}
 
-/* 스캔 영역 */
-#scanZone{width:100%;border-radius:14px;overflow:hidden;margin-bottom:16px;min-height:250px;background:#000}
-#scanZone video{border-radius:14px}
+/* 스캔 영역 — 일반 카메라 앱처럼 크게 */
+#scanZone{width:100%;border-radius:14px;overflow:hidden;margin-bottom:12px;
+  height:70vh;max-height:640px;background:#000;position:relative}
+#scanZone video{width:100%!important;height:100%!important;object-fit:cover;border-radius:14px}
+/* html5-qrcode가 삽입하는 내부 요소도 꽉 채우기 */
+#scanZone>div{border:none!important}
+#scanZone>div>video{width:100%!important;height:100%!important;object-fit:cover}
 
 .scan-result{background:#1a1a1a;border:1px solid #333;border-radius:12px;padding:16px;
   margin-bottom:16px;text-align:center}
@@ -140,7 +144,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.3</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.4</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -326,7 +330,13 @@ async function startScanner(){
   scanner=new Html5Qrcode('scanZone');
   await scanner.start(
     {facingMode:camFacing},
-    {fps:10,qrbox:{width:260,height:260},aspectRatio:1.0},
+    {
+      fps:15,
+      // 바코드는 가로로 길어서 넓은 직사각형 스캔창이 유리. 화면 크기에 맞춰 동적 설정.
+      qrbox:(vw,vh)=>({width:Math.floor(Math.min(vw,vh*1.6)*0.92),height:Math.floor(vh*0.45)}),
+      // 후면 카메라 고화질 우선 + 1:1 비율 강제 해제(일반 카메라처럼 꽉 차게)
+      videoConstraints:{facingMode:camFacing,width:{ideal:1920},height:{ideal:1080}}
+    },
     (text,result)=>{
       document.getElementById('scanVal').textContent=text;
       document.getElementById('scanType').textContent=result.result.format?.formatName||'QR/Barcode';
@@ -620,8 +630,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v2.3';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v13';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v2.4';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v14';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
