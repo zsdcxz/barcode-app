@@ -186,7 +186,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.1</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.2</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -241,7 +241,6 @@ textarea::placeholder{color:#444}
         <div class="scan-result-btns">
           <button class="btn-s" onclick="scanToBarcode()">바코드 생성</button>
           <button class="btn-s" onclick="copyVal()">복사</button>
-          <button class="btn-s" onclick="saveScanPhoto()">📥 사진 저장</button>
           <button class="btn-s" onclick="resumeScan()">🔄 다시 스캔</button>
         </div>
       </div>
@@ -289,7 +288,6 @@ textarea::placeholder{color:#444}
   <div class="ov-bar">
     <button class="ov-back" onclick="closeOverlay()">← 뒤로</button>
     <span class="ov-label" id="overlayLabel"></span>
-    <button class="ov-back" onclick="saveOverlayImage()">📥 저장</button>
   </div>
   <div class="ov-img-wrap">
     <img id="overlayImg" src="" alt="">
@@ -459,38 +457,23 @@ function dataURLtoBlob(dataURL){
   return new Blob([arr],{type:mime});
 }
 
-// 사진 저장: 공유 시트(갤러리 저장 가능) 우선, 실패 시 다운로드 폴더로
-async function saveImage(dataURL, name){
-  if(!dataURL){ toast('저장할 사진이 없습니다'); return; }
-  const fname=(name||'barcode_'+Date.now()).replace(/[^A-Za-z0-9_\-]/g,'')+'.jpg';
-  const blob=dataURLtoBlob(dataURL);
-  const file=new File([blob],fname,{type:'image/jpeg'});
-  // 1) Web Share(파일) — 안드로이드에서 '갤러리에 저장' 등 선택 가능
-  if(navigator.canShare && navigator.canShare({files:[file]})){
-    try{ await navigator.share({files:[file],title:fname}); toast('저장/공유 완료'); return; }
-    catch(e){ if(e&&e.name==='AbortError') return; } // 사용자가 취소
-  }
-  // 2) 다운로드 폴더로 저장
+// 사진을 폰에 바로 저장(다운로드 폴더). 촬영하면 바로 저장되는 것처럼 자동 호출.
+function downloadImage(dataURL, name){
+  if(!dataURL) return;
   try{
+    const ts=new Date();
+    const stamp=ts.getFullYear()+''+(ts.getMonth()+1).toString().padStart(2,'0')+
+      ts.getDate().toString().padStart(2,'0')+'_'+ts.getHours().toString().padStart(2,'0')+
+      ts.getMinutes().toString().padStart(2,'0')+ts.getSeconds().toString().padStart(2,'0');
+    const safe=(name||'barcode').replace(/[^A-Za-z0-9_\-]/g,'');
+    const fname=(safe?safe+'_':'')+stamp+'.jpg';
+    const blob=dataURLtoBlob(dataURL);
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url; a.download=fname;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
-    toast('다운로드 폴더에 저장됨: '+fname);
-  }catch(e){ toast('저장 실패: '+e.message); }
-}
-
-function saveScanPhoto(){
-  const snap=document.getElementById('scanSnap');
-  const val=document.getElementById('scanVal').textContent;
-  saveImage(snap.src, val);
-}
-
-function saveOverlayImage(){
-  const img=document.getElementById('overlayImg');
-  const label=document.getElementById('overlayLabel').textContent;
-  saveImage(img.src, label);
+  }catch(e){}
 }
 
 // ===== 네비 =====
@@ -612,8 +595,10 @@ async function onScanDetected(text,result){
   document.getElementById('scanZone').style.display='none';
   document.getElementById('scanControls').style.display='none';
   try{ if(navigator.vibrate) navigator.vibrate(120); }catch(e){}
-  // 자동 저장
+  // 앱 내 저장 내역에 기록
   addHist(text, type, snap);
+  // 폰에 사진 자동 저장(촬영하면 바로 저장되는 것처럼)
+  if(snap) downloadImage(snap, text);
   toast('저장됨: '+text);
   if(scanner){ try{await scanner.stop();}catch(e){} try{await scanner.clear();}catch(e){} scanner=null; }
 }
@@ -939,8 +924,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.1';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v21';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.2';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v22';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
