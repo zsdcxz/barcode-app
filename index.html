@@ -182,7 +182,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.8</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.9</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -203,7 +203,7 @@ textarea::placeholder{color:#444}
       <button class="fm" data-f="codabar" onclick="sf(this)">Codabar</button>
     </div>
     <div class="irow">
-      <input type="text" id="tagIn" placeholder="Service Tag 입력" value="BJ22XF3">
+      <input type="text" id="tagIn" placeholder="Service Tag 입력">
       <button class="btn" onclick="mkBC()">생성</button>
     </div>
     <div id="bcOut"></div>
@@ -878,8 +878,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v2.8';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v18';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v2.9';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v19';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
