@@ -1,4 +1,4 @@
-const CACHE = 'barcode-v16';
+const CACHE = 'barcode-v17';
 const URLS = [
   './', './index.html', './manifest.json',
   'https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js',

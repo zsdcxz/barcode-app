@@ -82,11 +82,19 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
 /* 전면 카메라는 거울처럼 좌우 반전 */
 #scanZone.mirrored video{transform:scaleX(-1)}
 
-.scan-result{background:#1a1a1a;border:1px solid #333;border-radius:12px;padding:16px;
-  margin-bottom:16px;text-align:center}
-.scan-result .val{font-family:Consolas,monospace;font-size:20px;color:#0078d4;
-  letter-spacing:2px;margin:8px 0}
-.scan-result .type{font-size:11px;color:#666;text-transform:uppercase}
+/* 스캔 결과 — 이미지 크게 + 값 오버레이 */
+.scan-result{background:#1a1a1a;border:1px solid #333;border-radius:14px;
+  margin-bottom:16px;overflow:hidden}
+.scan-snap-wrap{position:relative;width:100%;cursor:pointer}
+.scan-snap-wrap img{width:100%;max-height:55vh;object-fit:cover;display:block;border-radius:0}
+.scan-snap-wrap .snap-overlay{position:absolute;bottom:0;left:0;right:0;
+  background:linear-gradient(transparent,rgba(0,0,0,.85));padding:16px 14px 12px}
+.scan-snap-wrap .snap-hint{font-size:10px;color:rgba(255,255,255,.45);text-align:right;margin-bottom:4px}
+.scan-snap-no-img{padding:30px 16px;text-align:center;font-size:32px;color:#333}
+.scan-result .val{font-family:Consolas,monospace;font-size:22px;color:#fff;
+  letter-spacing:2px;word-break:break-all;font-weight:700}
+.scan-result .type{font-size:11px;color:rgba(255,255,255,.5);text-transform:uppercase;margin-top:2px}
+.scan-result-btns{padding:12px 14px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 
 /* OCR 영역 */
 .ocr-upload{border:2px dashed #333;border-radius:14px;padding:32px 16px;text-align:center;
@@ -145,10 +153,17 @@ textarea::placeholder{color:#444}
 .hist-clear{display:flex;justify-content:flex-end;margin-bottom:12px}
 
 /* 이미지 풀스크린 오버레이 */
-#imgOverlay{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:500;
-  display:none;align-items:center;justify-content:center}
-#imgOverlay img{max-width:96vw;max-height:96vh;border-radius:10px;object-fit:contain}
+#imgOverlay{position:fixed;inset:0;background:#000;z-index:500;
+  display:none;flex-direction:column}
 #imgOverlay.open{display:flex}
+#imgOverlay .ov-bar{display:flex;align-items:center;gap:10px;padding:14px 16px;
+  background:rgba(0,0,0,.6);position:absolute;top:0;left:0;right:0;z-index:1}
+#imgOverlay .ov-back{background:rgba(255,255,255,.15);border:none;color:#fff;
+  font-size:18px;padding:6px 14px;border-radius:10px;cursor:pointer}
+#imgOverlay .ov-label{font-family:Consolas,monospace;font-size:15px;color:#fff;
+  flex:1;letter-spacing:1px;word-break:break-all}
+#imgOverlay .ov-img-wrap{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto}
+#imgOverlay .ov-img-wrap img{max-width:100%;max-height:100%;object-fit:contain}
 
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;
   color:#fff;padding:10px 24px;border-radius:10px;font-size:13px;z-index:300;
@@ -167,7 +182,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.6</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.7</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -176,8 +191,8 @@ textarea::placeholder{color:#444}
   <div class="nav">
     <button class="on" onclick="go('gen',this)">바코드 생성</button>
     <button onclick="go('scan',this)">QR/바코드 스캔</button>
-    <button onclick="go('ocr',this)">사진 OCR</button>
     <button onclick="go('hist',this)" id="navHist">저장 내역</button>
+    <button onclick="go('ocr',this)">사진 OCR</button>
   </div>
 
   <!-- ========== 1. 바코드 생성 ========== -->
@@ -210,10 +225,16 @@ textarea::placeholder{color:#444}
     <div id="scanActive" style="display:none">
       <div id="scanZone"></div>
       <div class="scan-result" id="scanResult" style="display:none">
-        <img id="scanSnap" alt="촬영본" style="display:none;width:100%;max-height:200px;object-fit:contain;border-radius:10px;margin-bottom:10px">
-        <div class="type" id="scanType"></div>
-        <div class="val" id="scanVal"></div>
-        <div style="display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap">
+        <div class="scan-snap-wrap" id="snapWrap" onclick="openSnapOverlay()">
+          <img id="scanSnap" alt="촬영본" style="display:none">
+          <div class="scan-snap-no-img" id="snapNoImg">📷</div>
+          <div class="snap-overlay" id="snapOverlay" style="display:none">
+            <div class="snap-hint">탭하면 크게 보기</div>
+            <div class="type" id="scanType"></div>
+            <div class="val" id="scanVal"></div>
+          </div>
+        </div>
+        <div class="scan-result-btns">
           <button class="btn-s" onclick="scanToBarcode()">바코드 생성</button>
           <button class="btn-s" onclick="copyVal()">복사</button>
           <button class="btn-s" onclick="resumeScan()">🔄 다시 스캔</button>
@@ -259,8 +280,14 @@ textarea::placeholder{color:#444}
 </div>
 
 <!-- 이미지 풀스크린 오버레이 -->
-<div id="imgOverlay" onclick="this.classList.remove('open')">
-  <img id="overlayImg" src="" alt="">
+<div id="imgOverlay">
+  <div class="ov-bar">
+    <button class="ov-back" onclick="closeOverlay()">← 뒤로</button>
+    <span class="ov-label" id="overlayLabel"></span>
+  </div>
+  <div class="ov-img-wrap">
+    <img id="overlayImg" src="" alt="">
+  </div>
 </div>
 
 <!-- 토스트 -->
@@ -365,14 +392,44 @@ function histCopy(val){
   navigator.clipboard.writeText(val).then(()=>toast('복사됨: '+val));
 }
 
-// snap base64를 임시로 저장해두고 id로 조회
-const _snapCache={};
+// ===== 이미지 오버레이 (뒤로가기 지원) =====
+function openOverlay(src, label){
+  document.getElementById('overlayImg').src=src;
+  document.getElementById('overlayLabel').textContent=label||'';
+  document.getElementById('imgOverlay').classList.add('open');
+  // 뒤로가기로 닫을 수 있도록 history 스택에 추가
+  history.pushState({overlay:true},'');
+}
+
+function closeOverlay(){
+  document.getElementById('imgOverlay').classList.remove('open');
+  document.getElementById('overlayImg').src='';
+  // history.back()이 이 함수를 호출했을 수도 있으므로 state 확인 후 pop
+  if(history.state&&history.state.overlay) history.back();
+}
+
+// 뒤로가기 버튼(Android 물리/제스처) 감지
+window.addEventListener('popstate', e=>{
+  if(document.getElementById('imgOverlay').classList.contains('open')){
+    document.getElementById('imgOverlay').classList.remove('open');
+    document.getElementById('overlayImg').src='';
+  }
+});
+
+// 저장 내역 사진 클릭
 function showImg(id){
   const arr=loadHist();
   const item=arr.find(x=>x.id===id);
   if(!item||!item.snap) return;
-  document.getElementById('overlayImg').src=item.snap;
-  document.getElementById('imgOverlay').classList.add('open');
+  openOverlay(item.snap, item.value);
+}
+
+// 스캔 결과 사진 클릭
+function openSnapOverlay(){
+  const snap=document.getElementById('scanSnap');
+  if(!snap||!snap.src||snap.style.display==='none') return;
+  const val=document.getElementById('scanVal').textContent;
+  openOverlay(snap.src, val);
 }
 
 // ===== 네비 =====
@@ -514,6 +571,8 @@ function captureSnapshot(){
     const snap=document.getElementById('scanSnap');
     snap.src=dataUrl;
     snap.style.display='block';
+    document.getElementById('snapNoImg').style.display='none';
+    document.getElementById('snapOverlay').style.display='block';
     return dataUrl;
   }catch(e){ return null; }
 }
@@ -522,8 +581,11 @@ function captureSnapshot(){
 async function resumeScan(){
   document.getElementById('scanResult').style.display='none';
   document.getElementById('scanSnap').style.display='none';
+  document.getElementById('scanSnap').src='';
+  document.getElementById('snapNoImg').style.display='block';
+  document.getElementById('snapOverlay').style.display='none';
   document.getElementById('scanZone').style.display='block';
-  document.getElementById('scanZone').innerHTML='';   // 이전 스캐너 잔여 DOM 제거
+  document.getElementById('scanZone').innerHTML='';
   document.getElementById('scanControls').style.display='flex';
   try{ await startScanner(); }catch(e){}
 }
@@ -607,7 +669,7 @@ function renderQueue(){
       }).join('')+'</div>';
     }
     div.innerHTML=
-      '<img src="'+item.url+'">'+
+      '<img src="'+item.url+'" style="cursor:pointer" onclick="openOverlay(\''+item.url+'\',\''+escHtml(item.file.name||'사진'+(idx+1))+'\')">'+
       '<div class="info">'+
         '<div class="name">'+(item.file.name||'사진 '+(idx+1))+'</div>'+
         '<div class="status">'+item.status+'</div>'+
@@ -815,8 +877,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v2.6';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v16';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v2.7';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v17';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
