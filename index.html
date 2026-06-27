@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
-<title>Service Tag Barcode</title>
+<title>Service Tag Barcode v2.6</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
@@ -129,6 +129,27 @@ textarea::placeholder{color:#444}
 .multi-card{background:#fff;border-radius:12px;padding:18px 14px;margin-bottom:10px;
   text-align:center;box-shadow:0 3px 14px rgba(0,0,0,.4)}
 
+/* 저장 내역 */
+.hist-empty{text-align:center;color:#555;padding:40px 0;font-size:14px}
+.hist-item{background:#1a1a1a;border:1px solid #333;border-radius:12px;padding:14px;
+  margin-bottom:10px;display:flex;gap:12px;align-items:flex-start}
+.hist-item img{width:72px;height:72px;object-fit:cover;border-radius:8px;flex-shrink:0;
+  background:#111;cursor:pointer}
+.hist-item .hi-body{flex:1;min-width:0}
+.hist-item .hi-val{font-family:Consolas,monospace;font-size:18px;color:#0078d4;
+  letter-spacing:2px;word-break:break-all;cursor:pointer}
+.hist-item .hi-val:active{text-decoration:underline}
+.hist-item .hi-meta{font-size:11px;color:#555;margin-top:4px}
+.hist-item .hi-type{font-size:10px;color:#444;text-transform:uppercase;margin-top:2px}
+.hist-item .hi-btns{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.hist-clear{display:flex;justify-content:flex-end;margin-bottom:12px}
+
+/* 이미지 풀스크린 오버레이 */
+#imgOverlay{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:500;
+  display:none;align-items:center;justify-content:center}
+#imgOverlay img{max-width:96vw;max-height:96vh;border-radius:10px;object-fit:contain}
+#imgOverlay.open{display:flex}
+
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;
   color:#fff;padding:10px 24px;border-radius:10px;font-size:13px;z-index:300;
   opacity:0;transition:opacity .3s;pointer-events:none}
@@ -146,7 +167,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.5</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.6</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -156,6 +177,7 @@ textarea::placeholder{color:#444}
     <button class="on" onclick="go('gen',this)">바코드 생성</button>
     <button onclick="go('scan',this)">QR/바코드 스캔</button>
     <button onclick="go('ocr',this)">사진 OCR</button>
+    <button onclick="go('hist',this)" id="navHist">저장 내역</button>
   </div>
 
   <!-- ========== 1. 바코드 생성 ========== -->
@@ -226,6 +248,19 @@ textarea::placeholder{color:#444}
 
     <div id="ocrBcOut"></div>
   </div>
+
+  <!-- ========== 4. 저장 내역 ========== -->
+  <div class="page" id="pg-hist">
+    <div class="hist-clear">
+      <button class="btn-s" onclick="clearAllHist()" style="color:#e85050;border-color:#e85050">전체 삭제</button>
+    </div>
+    <div id="histList"></div>
+  </div>
+</div>
+
+<!-- 이미지 풀스크린 오버레이 -->
+<div id="imgOverlay" onclick="this.classList.remove('open')">
+  <img id="overlayImg" src="" alt="">
 </div>
 
 <!-- 토스트 -->
@@ -245,6 +280,101 @@ textarea::placeholder{color:#444}
 let fmt='CODE128', scanner=null, deferP=null, camFacing='environment', scanLocked=false;
 const ocrFiles=[];
 
+// ===== 저장 내역 (localStorage) =====
+const HIST_KEY='bc_history';
+function loadHist(){ try{return JSON.parse(localStorage.getItem(HIST_KEY)||'[]');}catch(e){return[];} }
+function saveHist(arr){ localStorage.setItem(HIST_KEY,JSON.stringify(arr)); }
+
+function addHist(value, type, snap){
+  const arr=loadHist();
+  // 같은 값이 이미 있으면 최신으로 업데이트
+  const idx=arr.findIndex(x=>x.value===value);
+  const item={id:Date.now(),value,type,date:new Date().toISOString(),snap:snap||null};
+  if(idx>=0) arr.splice(idx,1);
+  arr.unshift(item);
+  if(arr.length>200) arr.length=200; // 최대 200개
+  saveHist(arr);
+  updateHistBadge();
+}
+
+function deleteHist(id){
+  const arr=loadHist().filter(x=>x.id!==id);
+  saveHist(arr);
+  renderHist();
+  updateHistBadge();
+}
+
+function clearAllHist(){
+  if(!confirm('저장된 내역을 모두 삭제하시겠습니까?')) return;
+  saveHist([]);
+  renderHist();
+  updateHistBadge();
+  toast('전체 삭제됨');
+}
+
+function updateHistBadge(){
+  const arr=loadHist();
+  const btn=document.getElementById('navHist');
+  btn.textContent=arr.length?'저장 내역 ('+arr.length+')':'저장 내역';
+}
+
+function renderHist(){
+  const arr=loadHist();
+  const el=document.getElementById('histList');
+  if(!arr.length){
+    el.innerHTML='<div class="hist-empty">저장된 내역이 없습니다<br><span style="font-size:24px;margin-top:12px;display:block">📭</span></div>';
+    return;
+  }
+  el.innerHTML='';
+  arr.forEach(item=>{
+    const d=new Date(item.date);
+    const dateStr=d.getFullYear()+'.'+(d.getMonth()+1).toString().padStart(2,'0')+'.'+
+      d.getDate().toString().padStart(2,'0')+' '+d.getHours().toString().padStart(2,'0')+':'+
+      d.getMinutes().toString().padStart(2,'0');
+    const div=document.createElement('div');
+    div.className='hist-item';
+    const imgHtml=item.snap
+      ? '<img src="'+item.snap+'" alt="캡처" onclick="showImg(\''+item.id+'\')">'
+      : '<div style="width:72px;height:72px;border-radius:8px;background:#222;display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0">📷</div>';
+    div.innerHTML=
+      imgHtml+
+      '<div class="hi-body">'+
+        '<div class="hi-val" onclick="histToBarcode(\''+escHtml(item.value)+'\')">'+escHtml(item.value)+'</div>'+
+        '<div class="hi-type">'+escHtml(item.type||'')+'</div>'+
+        '<div class="hi-meta">'+dateStr+'</div>'+
+        '<div class="hi-btns">'+
+          '<button class="btn-s" onclick="histToBarcode(\''+escHtml(item.value)+'\')">바코드 생성</button>'+
+          '<button class="btn-s" onclick="histCopy(\''+escHtml(item.value)+'\')">복사</button>'+
+          '<button class="btn-s" style="color:#e85050;border-color:#e85050" onclick="deleteHist('+item.id+')">삭제</button>'+
+        '</div>'+
+      '</div>';
+    el.appendChild(div);
+  });
+}
+
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function histToBarcode(val){
+  document.getElementById('tagIn').value=val;
+  go('gen',document.querySelectorAll('.nav button')[0]);
+  mkBC();
+  toast('바코드 생성됨: '+val);
+}
+
+function histCopy(val){
+  navigator.clipboard.writeText(val).then(()=>toast('복사됨: '+val));
+}
+
+// snap base64를 임시로 저장해두고 id로 조회
+const _snapCache={};
+function showImg(id){
+  const arr=loadHist();
+  const item=arr.find(x=>x.id===id);
+  if(!item||!item.snap) return;
+  document.getElementById('overlayImg').src=item.snap;
+  document.getElementById('imgOverlay').classList.add('open');
+}
+
 // ===== 네비 =====
 function go(name,btn){
   document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('on'));
@@ -252,6 +382,7 @@ function go(name,btn){
   btn.classList.add('on');
   document.getElementById('pg-'+name).classList.add('on');
   if(name!=='scan' && scanner) stopScan();
+  if(name==='hist') renderHist();
 }
 
 function sf(b){
@@ -353,33 +484,38 @@ async function startScanner(){
   );
 }
 
-// 인식 순간 자동 촬영(현재 프레임 캡처) + 스캔 정지 + 결과 표시
+// 인식 순간 자동 촬영(현재 프레임 캡처) + 스캔 정지 + 결과 표시 + 자동 저장
 async function onScanDetected(text,result){
-  captureSnapshot();
+  const snap=captureSnapshot();
+  const type=result.result.format?.formatName||'QR/Barcode';
   document.getElementById('scanVal').textContent=text;
-  document.getElementById('scanType').textContent=result.result.format?.formatName||'QR/Barcode';
+  document.getElementById('scanType').textContent=type;
   document.getElementById('scanResult').style.display='block';
   document.getElementById('scanZone').style.display='none';
   document.getElementById('scanControls').style.display='none';
   try{ if(navigator.vibrate) navigator.vibrate(120); }catch(e){}
-  toast('자동 촬영됨: '+text);
+  // 자동 저장
+  addHist(text, type, snap);
+  toast('저장됨: '+text);
   if(scanner){ try{await scanner.stop();}catch(e){} try{await scanner.clear();}catch(e){} scanner=null; }
 }
 
-// 현재 영상 프레임을 캡처해 결과에 표시(전면은 좌우 반전 적용)
+// 현재 영상 프레임을 캡처해 결과에 표시(전면은 좌우 반전 적용). base64 반환.
 function captureSnapshot(){
   try{
     const video=document.querySelector('#scanZone video');
-    if(!video||!video.videoWidth) return;
+    if(!video||!video.videoWidth) return null;
     const c=document.createElement('canvas');
     c.width=video.videoWidth;c.height=video.videoHeight;
     const ctx=c.getContext('2d');
     if(camFacing==='user'){ ctx.translate(c.width,0); ctx.scale(-1,1); }
     ctx.drawImage(video,0,0,c.width,c.height);
+    const dataUrl=c.toDataURL('image/jpeg',0.75);
     const snap=document.getElementById('scanSnap');
-    snap.src=c.toDataURL('image/jpeg',0.85);
+    snap.src=dataUrl;
     snap.style.display='block';
-  }catch(e){}
+    return dataUrl;
+  }catch(e){ return null; }
 }
 
 // 다시 스캔: 결과 닫고 카메라 재시작
@@ -679,8 +815,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v2.5';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v15';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v2.6';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v16';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -876,6 +1012,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 
 // 초기
 mkBC();
+updateHistBadge();
 </script>
 </body>
 </html>
