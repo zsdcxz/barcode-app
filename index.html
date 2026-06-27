@@ -150,6 +150,10 @@ textarea::placeholder{color:#444}
 .hist-item .hi-meta{font-size:11px;color:#555;margin-top:4px}
 .hist-item .hi-type{font-size:10px;color:#444;text-transform:uppercase;margin-top:2px}
 .hist-item .hi-btns{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+/* 인라인 바코드: 너비=박스 가득, 높이=버튼 크기 */
+.hist-item .hi-bc-box{margin-top:8px;background:#fff;border-radius:6px;padding:4px 6px}
+.hist-item .hi-bc{display:block;width:100%;height:38px}
+.hist-item .hi-bc-err{font-size:11px;color:#888;text-align:center}
 .hist-clear{display:flex;justify-content:flex-end;margin-bottom:12px}
 
 /* 이미지 풀스크린 오버레이 */
@@ -182,7 +186,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v2.9</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.0</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -237,6 +241,7 @@ textarea::placeholder{color:#444}
         <div class="scan-result-btns">
           <button class="btn-s" onclick="scanToBarcode()">바코드 생성</button>
           <button class="btn-s" onclick="copyVal()">복사</button>
+          <button class="btn-s" onclick="saveScanPhoto()">📥 사진 저장</button>
           <button class="btn-s" onclick="resumeScan()">🔄 다시 스캔</button>
         </div>
       </div>
@@ -284,6 +289,7 @@ textarea::placeholder{color:#444}
   <div class="ov-bar">
     <button class="ov-back" onclick="closeOverlay()">← 뒤로</button>
     <span class="ov-label" id="overlayLabel"></span>
+    <button class="ov-back" onclick="saveOverlayImage()">📥 저장</button>
   </div>
   <div class="ov-img-wrap">
     <img id="overlayImg" src="" alt="">
@@ -369,13 +375,23 @@ function renderHist(){
         '<div class="hi-val" onclick="histToBarcode(\''+escHtml(item.value)+'\')">'+escHtml(item.value)+'</div>'+
         '<div class="hi-type">'+escHtml(item.type||'')+'</div>'+
         '<div class="hi-meta">'+dateStr+'</div>'+
+        '<div class="hi-bc-box"><svg class="hi-bc" id="hbc_'+item.id+'"></svg></div>'+
         '<div class="hi-btns">'+
-          '<button class="btn-s" onclick="histToBarcode(\''+escHtml(item.value)+'\')">바코드 생성</button>'+
           '<button class="btn-s" onclick="histCopy(\''+escHtml(item.value)+'\')">복사</button>'+
           '<button class="btn-s" style="color:#e85050;border-color:#e85050" onclick="deleteHist('+item.id+')">삭제</button>'+
         '</div>'+
       '</div>';
     el.appendChild(div);
+  });
+  // 각 항목 바코드 인라인 렌더(높이=버튼 크기, 너비=박스 가득)
+  arr.forEach(item=>{
+    try{
+      JsBarcode('#hbc_'+item.id,item.value,{format:'CODE128',width:2,height:36,
+        displayValue:false,margin:0,background:'#fff',lineColor:'#000'});
+    }catch(e){
+      const svg=document.getElementById('hbc_'+item.id);
+      if(svg) svg.outerHTML='<div class="hi-bc-err">바코드 생성 불가</div>';
+    }
   });
 }
 
@@ -430,6 +446,51 @@ function openSnapOverlay(){
   if(!snap||!snap.src||snap.style.display==='none') return;
   const val=document.getElementById('scanVal').textContent;
   openOverlay(snap.src, val);
+}
+
+// ===== 사진을 폰에 저장 =====
+// dataURL → Blob 변환
+function dataURLtoBlob(dataURL){
+  const [head,body]=dataURL.split(',');
+  const mime=(head.match(/:(.*?);/)||[])[1]||'image/jpeg';
+  const bin=atob(body);
+  const arr=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  return new Blob([arr],{type:mime});
+}
+
+// 사진 저장: 공유 시트(갤러리 저장 가능) 우선, 실패 시 다운로드 폴더로
+async function saveImage(dataURL, name){
+  if(!dataURL){ toast('저장할 사진이 없습니다'); return; }
+  const fname=(name||'barcode_'+Date.now()).replace(/[^A-Za-z0-9_\-]/g,'')+'.jpg';
+  const blob=dataURLtoBlob(dataURL);
+  const file=new File([blob],fname,{type:'image/jpeg'});
+  // 1) Web Share(파일) — 안드로이드에서 '갤러리에 저장' 등 선택 가능
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file],title:fname}); toast('저장/공유 완료'); return; }
+    catch(e){ if(e&&e.name==='AbortError') return; } // 사용자가 취소
+  }
+  // 2) 다운로드 폴더로 저장
+  try{
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast('다운로드 폴더에 저장됨: '+fname);
+  }catch(e){ toast('저장 실패: '+e.message); }
+}
+
+function saveScanPhoto(){
+  const snap=document.getElementById('scanSnap');
+  const val=document.getElementById('scanVal').textContent;
+  saveImage(snap.src, val);
+}
+
+function saveOverlayImage(){
+  const img=document.getElementById('overlayImg');
+  const label=document.getElementById('overlayLabel').textContent;
+  saveImage(img.src, label);
 }
 
 // ===== 네비 =====
@@ -557,7 +618,7 @@ async function onScanDetected(text,result){
   if(scanner){ try{await scanner.stop();}catch(e){} try{await scanner.clear();}catch(e){} scanner=null; }
 }
 
-// 현재 영상 프레임을 캡처해 결과에 표시(전면은 좌우 반전 적용). base64 반환.
+// 현재 영상 프레임을 캡처해 결과에 표시. base64 반환.
 function captureSnapshot(){
   try{
     const video=document.querySelector('#scanZone video');
@@ -565,8 +626,8 @@ function captureSnapshot(){
     const c=document.createElement('canvas');
     c.width=video.videoWidth;c.height=video.videoHeight;
     const ctx=c.getContext('2d');
-    // 자동 캡처 사진은 항상 좌우 반전(거울 모드)해서 저장/표시
-    ctx.translate(c.width,0); ctx.scale(-1,1);
+    // 카메라 원본 프레임 그대로 저장 → 글자가 정상 방향으로 읽힘.
+    // (전면 카메라 프리뷰는 거울 반전이라 거꾸로 보이지만, 원본 프레임은 정방향)
     ctx.drawImage(video,0,0,c.width,c.height);
     const dataUrl=c.toDataURL('image/jpeg',0.75);
     const snap=document.getElementById('scanSnap');
@@ -878,8 +939,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v2.9';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v19';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.0';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v20';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
