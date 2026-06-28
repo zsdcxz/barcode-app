@@ -105,6 +105,36 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
 .ocr-upload p{color:#777;font-size:14px}
 .ocr-upload .sub{color:#555;font-size:11px;margin-top:6px}
 
+/* 글자 OCR 토글 스위치 */
+.ocr-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:#1a1a1a;border:1px solid #333;border-radius:12px;padding:12px 14px;margin-bottom:16px}
+.ocr-toggle .ot-title{font-size:14px;color:#ddd;font-weight:600}
+.ocr-toggle .ot-sub{font-size:11px;color:#666;margin-top:3px}
+.switch{position:relative;display:inline-block;width:48px;height:28px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.switch .slider{position:absolute;inset:0;background:#444;border-radius:28px;transition:.2s;cursor:pointer}
+.switch .slider:before{content:"";position:absolute;height:22px;width:22px;left:3px;bottom:3px;
+  background:#fff;border-radius:50%;transition:.2s}
+.switch input:checked+.slider{background:#0078d4}
+.switch input:checked+.slider:before{transform:translateX(20px)}
+
+/* 인식 실패 사진 모음 */
+.fail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.fail-cell{background:#1a1a1a;border:1px solid #3a2a2a;border-radius:10px;overflow:hidden}
+.fail-cell img{width:100%;height:90px;object-fit:cover;display:block;cursor:pointer;background:#111}
+.fail-cell .fail-name{font-size:10px;color:#888;padding:4px 6px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.fail-hint{font-size:12px;color:#888;margin-top:10px;line-height:1.5}
+
+/* 인식 실패 모음 */
+.fail-sep{font-size:13px;color:#e8a050;margin:20px 0 10px;padding-top:16px;
+  border-top:1px solid #333;display:flex;align-items:center;gap:6px}
+.fail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+.fail-grid .fg-item{position:relative;border-radius:8px;overflow:hidden;background:#000;aspect-ratio:1}
+.fail-grid .fg-item img{width:100%;height:100%;object-fit:cover;cursor:pointer;display:block}
+.fail-grid .fg-item .fg-x{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.6);
+  color:#fff;border:none;border-radius:6px;width:22px;height:22px;font-size:12px;cursor:pointer;line-height:1}
+
 .ocr-queue{margin-bottom:16px}
 .oq-item{background:#1a1a1a;border:1px solid #333;border-radius:10px;padding:12px 14px;
   margin-bottom:8px;display:flex;align-items:center;gap:12px}
@@ -186,7 +216,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.2</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.3</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -257,7 +287,19 @@ textarea::placeholder{color:#444}
       <input type="file" accept="image/*" multiple onchange="addPhotos(event)">
       <div class="icon">🖼️</div>
       <p>사진을 선택하세요 (복수 선택 가능)</p>
-      <div class="sub">카메라 촬영 또는 갤러리에서 선택</div>
+      <div class="sub">QR·바코드를 인식합니다</div>
+    </div>
+
+    <!-- 글자 OCR 토글 (기본 OFF) -->
+    <div class="ocr-toggle">
+      <div class="ot-text">
+        <div class="ot-title">글자 OCR 사용</div>
+        <div class="ot-sub">바코드가 없을 때 글자(서비스태그)도 읽습니다 · 느림</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="ocrTextSwitch" onchange="ocrUseText=this.checked">
+        <span class="slider"></span>
+      </label>
     </div>
 
     <div class="ocr-queue" id="ocrQueue"></div>
@@ -270,6 +312,9 @@ textarea::placeholder{color:#444}
       <div class="bar" id="ocrBar"></div>
     </div>
     <div class="ptext" id="ocrText" style="display:none"></div>
+
+    <!-- 인식 실패 모음 -->
+    <div id="ocrFailed"></div>
 
     <div id="ocrBcOut"></div>
   </div>
@@ -309,6 +354,7 @@ textarea::placeholder{color:#444}
 <script>
 // ===== 전역 =====
 let fmt='CODE128', scanner=null, deferP=null, camFacing='environment', scanLocked=false;
+let ocrUseText=false;   // 글자 OCR 사용 여부(기본 OFF) — 토글 스위치로 제어
 const ocrFiles=[];
 
 // ===== 저장 내역 (localStorage) =====
@@ -730,7 +776,28 @@ function renderQueue(){
 function removeOcr(idx){
   ocrFiles.splice(idx,1);
   renderQueue();
+  renderFailed();
   if(!ocrFiles.length) document.getElementById('ocrStartBtn').style.display='none';
+}
+
+// 인식 실패한 사진을 한곳에 모아서 표시(썸네일 갤러리, 탭하면 확대)
+function renderFailed(){
+  const box=document.getElementById('ocrFailed');
+  const failed=ocrFiles.filter(f=>f.failed);
+  if(!failed.length){ box.innerHTML=''; return; }
+  let html='<div class="sep">인식 실패 ('+failed.length+'장)</div>'+
+    '<div class="fail-grid">';
+  failed.forEach(f=>{
+    html+='<div class="fail-cell">'+
+      '<img src="'+f.url+'" onclick="openOverlay(\''+f.url+'\',\''+escHtml(f.file.name||'실패 사진')+'\')">'+
+      '<div class="fail-name">'+escHtml(f.file.name||'사진')+'</div>'+
+    '</div>';
+  });
+  html+='</div>';
+  if(!ocrUseText){
+    html+='<div class="fail-hint">글자 OCR 스위치를 켜면 바코드가 없는 사진의 글자도 읽어볼 수 있어요.</div>';
+  }
+  box.innerHTML=html;
 }
 
 function pickWord(text){
@@ -751,6 +818,9 @@ async function runBatchOCR(){
   prog.style.display='block';
   txt.style.display='block';
   document.getElementById('ocrStartBtn').disabled=true;
+  // 재인식: 이전에 실패/미인식한 사진은 다시 시도(글자 OCR 토글 변경 후 재시도 대응)
+  ocrFiles.forEach(f=>{ if(f.failed||/실패|미인식|오류/.test(f.status||'')){ f.status='대기'; f.failed=false; f.words=[]; } });
+  document.getElementById('ocrFailed').innerHTML='';
 
   for(let i=0;i<ocrFiles.length;i++){
     const item=ocrFiles[i];
@@ -766,6 +836,7 @@ async function runBatchOCR(){
     try{
       // 1차: zbar-wasm으로 바코드/QR 인식 (0°/90° + 2배 확대 재시도)
       let bcDetected=false;
+      item.failed=false;
       try{
         const symbols=await scanBarcode(item.file);
         if(symbols.length){
@@ -780,8 +851,15 @@ async function runBatchOCR(){
         }
       }catch(zbErr){}
 
-      // 2차: 바코드 미감지 시 OCR (0°/180° 시도)
-      if(!bcDetected){
+      // 글자 OCR이 꺼져 있으면: 바코드 못 읽은 사진은 '인식 실패'로 분류
+      if(!bcDetected && !ocrUseText){
+        item.words=[];
+        item.failed=true;
+        item.status='바코드/QR 미인식';
+      }
+
+      // 2차: (글자 OCR ON일 때만) 바코드 미감지 시 OCR (0°/180° 시도)
+      if(!bcDetected && ocrUseText){
         const worker=await Tesseract.createWorker('eng',1,{
           logger:m=>{
             if(m.status==='recognizing text'){
@@ -846,9 +924,15 @@ async function runBatchOCR(){
 
         const unique=[...new Map(words.map(w=>[w.text,w])).values()];
         item.words=unique;
-        item.status='텍스트 인식 완료 ('+unique.length+'개)';
+        if(unique.length){
+          item.status='텍스트 인식 완료 ('+unique.length+'개)';
+        }else{
+          item.failed=true;
+          item.status='인식 실패';
+        }
       }
     }catch(e){
+      item.failed=true;
       item.status='오류: '+e.message;
     }
 
@@ -856,12 +940,15 @@ async function runBatchOCR(){
     renderQueue();
   }
 
-  txt.textContent='전체 인식 완료!';
+  const failCount=ocrFiles.filter(f=>f.failed).length;
+  txt.textContent=failCount?('완료 — 인식 실패 '+failCount+'장'):'전체 인식 완료!';
   document.getElementById('ocrStartBtn').disabled=false;
   document.getElementById('ocrStartBtn').textContent='다시 인식';
 
-  // 자동으로 일괄 바코드 생성
-  const allWords=ocrFiles.flatMap(f=>f.words).map(w=>w.text);
+  renderFailed();
+
+  // 자동으로 일괄 바코드 생성 (성공 항목만)
+  const allWords=ocrFiles.filter(f=>!f.failed).flatMap(f=>f.words).map(w=>w.text);
   const uniqueAll=[...new Set(allWords)];
   if(uniqueAll.length){
     const out=document.getElementById('ocrBcOut');
@@ -924,8 +1011,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.2';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v22';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.3';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v23';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
