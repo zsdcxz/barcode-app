@@ -235,7 +235,7 @@ textarea::placeholder{color:#444}
 #imgOverlay .ov-img-wrap img{max-width:100%;max-height:100%;object-fit:contain}
 
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;
-  color:#fff;padding:10px 24px;border-radius:10px;font-size:13px;z-index:300;
+  color:#fff;padding:10px 24px;border-radius:10px;font-size:13px;z-index:900;
   opacity:0;transition:opacity .3s;pointer-events:none}
 .toast.show{opacity:1}
 
@@ -251,7 +251,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.7</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.8</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -440,7 +440,7 @@ textarea::placeholder{color:#444}
 <div id="docEditor">
   <div class="de-bar">
     <button class="ov-back" onclick="closeDocEditor()">취소</button>
-    <span class="de-title">네 모서리를 코드 영역에 맞추세요</span>
+    <span class="de-title" id="deTitle">네 모서리를 코드 영역에 맞추세요</span>
     <button class="ov-back de-go" onclick="confirmDocEditor()">보정 후 스캔</button>
   </div>
   <div class="de-stage" id="deStage">
@@ -1287,11 +1287,18 @@ function closeDocEditor(){
   if(history.state&&history.state.docEditor) history.back();
 }
 
+function setDeTitle(t){ const el=document.getElementById('deTitle'); if(el) el.textContent=t; }
+
 async function confirmDocEditor(){
   if(!deState){ closeDocEditor(); return; }
+  const goBtn=document.querySelector('#docEditor .de-go');
+  if(goBtn) goBtn.disabled=true;
   try{
+    setDeTitle('OpenCV 준비 중...');
     await loadOpenCV();
+    setDeTitle('정면 보정 중...');
     const canvas=warpToCanvas(deState.img, deState.pts);
+    setDeTitle('스캔 중...');
     const symbols=await scanBarcodeImg(canvas);
     const item=ocrFiles.find(f=>f.id===deState.id);
     if(symbols.length && item){
@@ -1308,8 +1315,12 @@ async function confirmDocEditor(){
         return;
       }
     }
-    toast('인식 실패 — 네 모서리를 코드에 더 정확히 맞춰보세요');
-  }catch(e){ toast('보정 실패: '+e.message); }
+    setDeTitle('❌ 인식 실패 — 모서리를 코드에 더 정확히 맞춰 다시 시도');
+  }catch(e){
+    setDeTitle('⚠️ 오류: '+(e.message||e));
+  }finally{
+    if(goBtn) goBtn.disabled=false;
+  }
 }
 
 // ===== 다운로드/공유 =====
@@ -1361,8 +1372,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.7';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v27';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.8';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v28';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
