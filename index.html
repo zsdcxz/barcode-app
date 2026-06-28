@@ -139,6 +139,12 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
 .multi-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .multi-empty{font-size:12px;color:#555}
 
+/* 합치기 공용 행(바코드생성/사진OCR 탭) */
+.merge-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.merge-row .ms-label{font-size:11px;color:#888}
+.merge-row select{background:#252525;color:#ddd;border:1px solid #444;
+  border-radius:8px;padding:7px 9px;font-size:12px}
+
 /* 인식 실패 모음 */
 .fail-sep{font-size:13px;color:#e8a050;margin:20px 0 10px;padding-top:16px;
   border-top:1px solid #333;display:flex;align-items:center;gap:6px}
@@ -229,7 +235,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.5</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.6</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -258,7 +264,20 @@ textarea::placeholder{color:#444}
 
     <div class="sep">일괄 생성 (줄바꿈 구분)</div>
     <textarea id="batchIn" placeholder="BJ22XF3&#10;ABC1234&#10;XYZ5678"></textarea>
-    <button class="btn btn-full" onclick="mkBatch()">일괄 생성</button>
+    <button class="btn btn-full" onclick="mkBatch()">일괄 생성 (각각 1개씩)</button>
+
+    <div class="merge-row">
+      <span class="ms-label">구분자</span>
+      <select id="genMergeSep">
+        <option value="|">| (막대)</option>
+        <option value=",">, (쉼표)</option>
+        <option value=" ">공백</option>
+        <option value="\n">줄바꿈</option>
+        <option value="">붙여쓰기</option>
+      </select>
+      <button class="btn-s" onclick="mergeFromBatch('CODE128')">합쳐서 바코드</button>
+      <button class="btn-s" onclick="mergeFromBatch('QR')">합쳐서 QR코드</button>
+    </div>
   </div>
 
   <!-- ========== 2. QR/바코드 스캔 ========== -->
@@ -363,6 +382,20 @@ textarea::placeholder{color:#444}
 
     <!-- 인식 실패 모음 -->
     <div id="ocrFailed"></div>
+
+    <!-- 인식된 값들을 하나로 합치기 -->
+    <div id="ocrMergeRow" class="merge-row" style="display:none">
+      <span class="ms-label">인식값 합치기 · 구분자</span>
+      <select id="ocrMergeSep">
+        <option value="|">| (막대)</option>
+        <option value=",">, (쉼표)</option>
+        <option value=" ">공백</option>
+        <option value="\n">줄바꿈</option>
+        <option value="">붙여쓰기</option>
+      </select>
+      <button class="btn-s" onclick="mergeOcrResults('CODE128')">합쳐서 바코드</button>
+      <button class="btn-s" onclick="mergeOcrResults('QR')">합쳐서 QR코드</button>
+    </div>
 
     <div id="ocrBcOut"></div>
   </div>
@@ -775,18 +808,37 @@ function copyMerged(){
   navigator.clipboard.writeText(merged).then(()=>toast('합친값 복사됨'));
 }
 
-async function makeMerged(format){
-  if(!multiList.length){ toast('수집된 코드가 없습니다'); return; }
-  const merged=getMergedValue();
-  // 스캐너 정지 후 생성 탭으로
-  if(scanner){ try{await scanner.stop();}catch(e){} try{await scanner.clear();}catch(e){} scanner=null; }
+// 공용: 값 배열을 구분자로 합쳐 하나의 코드(CODE128/QR)로 생성 → 생성 탭 표시
+function generateMerged(values, sep, format){
+  const list=(values||[]).map(v=>String(v).trim()).filter(Boolean);
+  if(!list.length){ toast('합칠 값이 없습니다'); return; }
+  let s=sep; if(s==='\\n') s='\n';   // select의 리터럴 \n → 실제 줄바꿈
+  const merged=list.join(s);
   document.getElementById('tagIn').value=merged;
-  go('gen',document.querySelectorAll('.nav button')[0]);
-  // 합친 문자열을 하나의 코드로(CODE128 또는 QR). 둘 다 임의 문자열 가능.
   fmt=format;
   document.querySelectorAll('.fm').forEach(x=>x.classList.toggle('on',x.dataset.f===format));
+  go('gen',document.querySelectorAll('.nav button')[0]);
   mkBC();
-  toast('합쳐서 '+(format==='QR'?'QR코드':'바코드')+' 생성됨('+multiList.length+'개)');
+  toast('합쳐서 '+(format==='QR'?'QR코드':'바코드')+' 생성됨('+list.length+'개)');
+}
+
+// 스캔 탭(연속 합치기) → 공용 함수 호출
+async function makeMerged(format){
+  if(!multiList.length){ toast('수집된 코드가 없습니다'); return; }
+  if(scanner){ try{await scanner.stop();}catch(e){} try{await scanner.clear();}catch(e){} scanner=null; }
+  generateMerged(multiList, document.getElementById('multiSep').value, format);
+}
+
+// 바코드 생성 탭: 일괄 입력칸의 줄들을 합쳐서 하나로
+function mergeFromBatch(format){
+  const lines=document.getElementById('batchIn').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  generateMerged(lines, document.getElementById('genMergeSep').value, format);
+}
+
+// 사진 OCR 탭: 인식된 값들을 합쳐서 하나로
+function mergeOcrResults(format){
+  const vals=[...new Set(ocrFiles.filter(f=>!f.failed).flatMap(f=>f.words).map(w=>w.text))];
+  generateMerged(vals, document.getElementById('ocrMergeSep').value, format);
 }
 
 // 현재 영상 프레임을 캡처해 결과에 표시. base64 반환.
@@ -1090,13 +1142,16 @@ async function runBatchOCR(){
   // 자동으로 일괄 바코드 생성 (성공 항목만)
   const allWords=ocrFiles.filter(f=>!f.failed).flatMap(f=>f.words).map(w=>w.text);
   const uniqueAll=[...new Set(allWords)];
+  // 합치기 행은 인식값이 있을 때만 노출
+  document.getElementById('ocrMergeRow').style.display=uniqueAll.length?'flex':'none';
   if(uniqueAll.length){
     const out=document.getElementById('ocrBcOut');
     out.innerHTML='<div class="sep">인식된 태그 바코드</div>';
     uniqueAll.forEach((tag,i)=>{
       const d=document.createElement('div');d.className='multi-card';
       d.innerHTML='<svg id="ob_'+i+'"></svg>';out.appendChild(d);
-      JsBarcode('#ob_'+i,tag,{format:fmt,width:2,height:55,displayValue:true,
+      // 개별 항목은 항상 CODE128(gen 탭의 fmt 선택과 무관하게 안전)
+      JsBarcode('#ob_'+i,tag,{format:'CODE128',width:2,height:55,displayValue:true,
         fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'});
     });
   }
@@ -1151,8 +1206,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.5';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v25';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.6';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v26';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
