@@ -153,6 +153,9 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
 #docEditor .de-bar{display:flex;align-items:center;gap:8px;padding:12px 14px;background:rgba(0,0,0,.7)}
 #docEditor .de-title{flex:1;font-size:13px;color:#ddd;text-align:center}
 #docEditor .de-go{background:#0078d4!important}
+#docEditor .de-presets{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;
+  padding:8px 12px;background:rgba(0,0,0,.5)}
+.de-stage.placing{cursor:crosshair}
 .de-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none}
 .de-stage img{max-width:100%;max-height:100%;object-fit:contain;display:block;-webkit-user-select:none;user-select:none;pointer-events:none}
 .de-stage svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
@@ -251,7 +254,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.9</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.0</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -440,8 +443,13 @@ textarea::placeholder{color:#444}
 <div id="docEditor">
   <div class="de-bar">
     <button class="ov-back" onclick="closeDocEditor()">취소</button>
-    <span class="de-title" id="deTitle">네 모서리를 코드 영역에 맞추세요</span>
+    <span class="de-title" id="deTitle">네 꼭짓점을 차례로 탭하세요</span>
     <button class="ov-back de-go" onclick="confirmDocEditor()">보정 후 스캔</button>
+  </div>
+  <div class="de-presets">
+    <button class="btn-s" onclick="presetBarcode()">▭ 바코드 영역</button>
+    <button class="btn-s" onclick="presetQR()">⬛ QR 영역</button>
+    <button class="btn-s" onclick="resetDocPoints()">↺ 다시 찍기</button>
   </div>
   <div class="de-stage" id="deStage">
     <img id="deImg" src="" alt="">
@@ -1238,10 +1246,9 @@ function openDocEditor(id){
     const dispW=nw*scale, dispH=nh*scale;
     imgEl.style.width=dispW+'px'; imgEl.style.height=dispH+'px';
     const offX=(sw-dispW)/2, offY=(sh-dispH)/2;
-    // 초기 사각형: 15% 안쪽
-    const mx=nw*0.15, my=nh*0.15;
-    const pts=[{x:mx,y:my},{x:nw-mx,y:my},{x:nw-mx,y:nh-my},{x:mx,y:nh-my}];
-    deState={id,img:natImg,nw,nh,scale,offX,offY,pts};
+    // 초기: 자동영역 표시하지 않고, 사용자가 직접 4점 탭(빠른 영역 지정)
+    deState={id,img:natImg,nw,nh,scale,offX,offY,pts:[],placing:true};
+    setDeTitle('네 꼭짓점을 차례로 탭하세요 (또는 프리셋)');
     layoutDocHandles();
   };
   natImg.src=item.url;
@@ -1249,37 +1256,87 @@ function openDocEditor(id){
 
 function layoutDocHandles(){
   if(!deState) return;
+  const stage=document.getElementById('deStage');
+  stage.classList.toggle('placing',!!deState.placing);
   const handles=document.querySelectorAll('#docEditor .de-handle');
   const poly=document.getElementById('dePoly');
   const sp=deState.pts.map(p=>({
     x:deState.offX+p.x*deState.scale,
     y:deState.offY+p.y*deState.scale
   }));
-  handles.forEach((h,i)=>{ h.style.left=sp[i].x+'px'; h.style.top=sp[i].y+'px'; });
+  // 찍힌 점만 핸들 표시, 나머지는 숨김
+  handles.forEach((h,i)=>{
+    if(i<sp.length){ h.style.display='block'; h.style.left=sp[i].x+'px'; h.style.top=sp[i].y+'px'; }
+    else h.style.display='none';
+  });
   poly.setAttribute('points',sp.map(p=>p.x+','+p.y).join(' '));
 }
 
-// 핸들 드래그(포인터)
-let deDrag=null;
-document.addEventListener('pointerdown',e=>{
-  const h=e.target.closest('#docEditor .de-handle');
-  if(!h||!deState) return;
-  deDrag=parseInt(h.dataset.i,10);
-  h.setPointerCapture(e.pointerId);
-  e.preventDefault();
-});
-document.addEventListener('pointermove',e=>{
-  if(deDrag===null||!deState) return;
+// 스테이지를 탭해 점 찍기(placing 모드일 때만)
+function stageToImgCoord(e){
   const stage=document.getElementById('deStage');
   const r=stage.getBoundingClientRect();
   let x=(e.clientX-r.left-deState.offX)/deState.scale;
   let y=(e.clientY-r.top-deState.offY)/deState.scale;
-  x=Math.max(0,Math.min(deState.nw,x));
-  y=Math.max(0,Math.min(deState.nh,y));
-  deState.pts[deDrag]={x,y};
+  return {x:Math.max(0,Math.min(deState.nw,x)),y:Math.max(0,Math.min(deState.nh,y))};
+}
+
+// 핸들 드래그(포인터) + 점 찍기
+let deDrag=null;
+document.addEventListener('pointerdown',e=>{
+  if(!deState) return;
+  const h=e.target.closest('#docEditor .de-handle');
+  if(h){                                  // 조정: 핸들 드래그
+    deDrag=parseInt(h.dataset.i,10);
+    h.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return;
+  }
+  // 점 찍기: placing 모드 + 스테이지 내부 클릭
+  if(deState.placing && e.target.closest('#deStage')){
+    deState.pts.push(stageToImgCoord(e));
+    if(deState.pts.length>=4){
+      deState.pts=orderQuad(deState.pts);
+      deState.placing=false;
+      setDeTitle('모서리를 드래그해 미세 조정 후 스캔');
+    }else{
+      setDeTitle('꼭짓점 '+deState.pts.length+'/4 — 계속 탭하세요');
+    }
+    layoutDocHandles();
+  }
+});
+document.addEventListener('pointermove',e=>{
+  if(deDrag===null||!deState) return;
+  deState.pts[deDrag]=stageToImgCoord(e);
   layoutDocHandles();
 });
 document.addEventListener('pointerup',()=>{ deDrag=null; });
+
+// 프리셋: 가운데에 기본 영역 배치(이후 드래그로 미세조정)
+function setDocPreset(wRatio,hRatio){
+  if(!deState) return;
+  const w=deState.nw*wRatio, h=deState.nh*hRatio;
+  const cx=deState.nw/2, cy=deState.nh/2;
+  deState.pts=[
+    {x:cx-w/2,y:cy-h/2},{x:cx+w/2,y:cy-h/2},
+    {x:cx+w/2,y:cy+h/2},{x:cx-w/2,y:cy+h/2}
+  ];
+  deState.placing=false;
+  setDeTitle('모서리를 드래그해 맞춘 뒤 스캔');
+  layoutDocHandles();
+}
+function presetBarcode(){ setDocPreset(0.78,0.28); }   // 가로로 넓은 바코드
+function presetQR(){
+  if(!deState) return;
+  const side=Math.min(deState.nw,deState.nh)*0.55;      // 정사각형 QR
+  setDocPreset(side/deState.nw, side/deState.nh);
+}
+function resetDocPoints(){
+  if(!deState) return;
+  deState.pts=[]; deState.placing=true;
+  setDeTitle('네 꼭짓점을 차례로 탭하세요 (또는 프리셋)');
+  layoutDocHandles();
+}
 
 function closeDocEditor(){
   document.getElementById('docEditor').classList.remove('open');
@@ -1291,6 +1348,10 @@ function setDeTitle(t){ const el=document.getElementById('deTitle'); if(el) el.t
 
 async function confirmDocEditor(){
   if(!deState){ closeDocEditor(); return; }
+  if(deState.placing || deState.pts.length<4){
+    setDeTitle('네 꼭짓점을 모두 지정하세요 (또는 프리셋 사용)');
+    return;
+  }
   const goBtn=document.querySelector('#docEditor .de-go');
   if(goBtn) goBtn.disabled=true;
   try{
@@ -1372,8 +1433,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.9';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v29';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.0';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v30';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
