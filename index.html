@@ -144,6 +144,22 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
 .merge-row .ms-label{font-size:11px;color:#888}
 .merge-row select{background:#252525;color:#ddd;border:1px solid #444;
   border-radius:8px;padding:7px 9px;font-size:12px}
+.fail-fix{width:100%;border-radius:0 0 9px 9px;border:none;border-top:1px solid #333;
+  font-size:11px;padding:7px 4px}
+
+/* 수동 문서보정 에디터 */
+#docEditor{position:fixed;inset:0;background:#000;z-index:600;display:none;flex-direction:column}
+#docEditor.open{display:flex}
+#docEditor .de-bar{display:flex;align-items:center;gap:8px;padding:12px 14px;background:rgba(0,0,0,.7)}
+#docEditor .de-title{flex:1;font-size:13px;color:#ddd;text-align:center}
+#docEditor .de-go{background:#0078d4!important}
+.de-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none}
+.de-stage img{max-width:100%;max-height:100%;object-fit:contain;display:block;-webkit-user-select:none;user-select:none;pointer-events:none}
+.de-stage svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.de-stage #dePoly{fill:rgba(0,120,212,.18);stroke:#0078d4;stroke-width:2}
+.de-handle{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;
+  background:rgba(0,120,212,.35);border:2px solid #0078d4;box-shadow:0 0 0 2px rgba(255,255,255,.5);
+  touch-action:none;cursor:grab}
 
 /* 인식 실패 모음 */
 .fail-sep{font-size:13px;color:#e8a050;margin:20px 0 10px;padding-top:16px;
@@ -235,7 +251,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.6</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.7</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -420,6 +436,23 @@ textarea::placeholder{color:#444}
   </div>
 </div>
 
+<!-- 수동 문서보정 에디터 -->
+<div id="docEditor">
+  <div class="de-bar">
+    <button class="ov-back" onclick="closeDocEditor()">취소</button>
+    <span class="de-title">네 모서리를 코드 영역에 맞추세요</span>
+    <button class="ov-back de-go" onclick="confirmDocEditor()">보정 후 스캔</button>
+  </div>
+  <div class="de-stage" id="deStage">
+    <img id="deImg" src="" alt="">
+    <svg id="deSvg"><polygon id="dePoly" points=""></polygon></svg>
+    <div class="de-handle" data-i="0"></div>
+    <div class="de-handle" data-i="1"></div>
+    <div class="de-handle" data-i="2"></div>
+    <div class="de-handle" data-i="3"></div>
+  </div>
+</div>
+
 <!-- 토스트 -->
 <div class="toast" id="toast"></div>
 
@@ -558,6 +591,10 @@ window.addEventListener('popstate', e=>{
   if(document.getElementById('imgOverlay').classList.contains('open')){
     document.getElementById('imgOverlay').classList.remove('open');
     document.getElementById('overlayImg').src='';
+  }
+  const ed=document.getElementById('docEditor');
+  if(ed && ed.classList.contains('open')){
+    ed.classList.remove('open'); deState=null; deDrag=null;
   }
 });
 
@@ -983,9 +1020,11 @@ function renderFailed(){
     html+='<div class="fail-cell">'+
       '<img src="'+f.url+'" onclick="openOverlay(\''+f.url+'\',\''+escHtml(f.file.name||'실패 사진')+'\')">'+
       '<div class="fail-name">'+escHtml(f.file.name||'사진')+'</div>'+
+      '<button class="btn-s fail-fix" onclick="openDocEditor(\''+f.id+'\')">✂️ 수동 보정</button>'+
     '</div>';
   });
   html+='</div>';
+  html+='<div class="fail-hint">수동 보정: 코드 영역의 네 모서리를 드래그해 맞추면 정면으로 펴서 다시 스캔합니다.</div>';
   if(!ocrUseText){
     html+='<div class="fail-hint">글자 OCR 스위치를 켜면 바코드가 없는 사진의 글자도 읽어볼 수 있어요.</div>';
   }
@@ -1043,7 +1082,28 @@ async function runBatchOCR(){
         }
       }catch(zbErr){}
 
-      // 글자 OCR이 꺼져 있으면: 바코드 못 읽은 사진은 '인식 실패'로 분류
+      // 1.5차: 바코드 미감지 시 '자동 문서보정(원근 교정)' 후 재시도(갤럭시 갤러리 스캔 방식)
+      if(!bcDetected){
+        try{
+          item.status='문서 자동보정 중...';renderQueue();
+          const doc=await autoDocScan(item.file);
+          if(doc&&doc.canvas){
+            const symbols=await scanBarcodeImg(doc.canvas);
+            if(symbols.length){
+              item.words=symbols.map(s=>({
+                text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+                conf:100,isBc:true,bcType:s.type
+              })).filter(w=>w.text.length>=2);
+              if(item.words.length){
+                item.status='보정 후 인식 완료 ('+item.words.length+'개)';
+                bcDetected=true;
+              }
+            }
+          }
+        }catch(docErr){}
+      }
+
+      // 글자 OCR이 꺼져 있으면: 바코드 못 읽은 사진은 '인식 실패'로 분류(→ 수동 보정 가능)
       if(!bcDetected && !ocrUseText){
         item.words=[];
         item.failed=true;
@@ -1138,23 +1198,118 @@ async function runBatchOCR(){
   document.getElementById('ocrStartBtn').textContent='다시 인식';
 
   renderFailed();
+  refreshOcrOutputs();
+}
 
-  // 자동으로 일괄 바코드 생성 (성공 항목만)
+// 인식된 값들로 개별 바코드 + 합치기 행 갱신(자동 인식/수동 보정 후 공통 사용)
+function refreshOcrOutputs(){
   const allWords=ocrFiles.filter(f=>!f.failed).flatMap(f=>f.words).map(w=>w.text);
   const uniqueAll=[...new Set(allWords)];
-  // 합치기 행은 인식값이 있을 때만 노출
   document.getElementById('ocrMergeRow').style.display=uniqueAll.length?'flex':'none';
-  if(uniqueAll.length){
-    const out=document.getElementById('ocrBcOut');
-    out.innerHTML='<div class="sep">인식된 태그 바코드</div>';
-    uniqueAll.forEach((tag,i)=>{
-      const d=document.createElement('div');d.className='multi-card';
-      d.innerHTML='<svg id="ob_'+i+'"></svg>';out.appendChild(d);
-      // 개별 항목은 항상 CODE128(gen 탭의 fmt 선택과 무관하게 안전)
-      JsBarcode('#ob_'+i,tag,{format:'CODE128',width:2,height:55,displayValue:true,
-        fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'});
-    });
-  }
+  const out=document.getElementById('ocrBcOut');
+  if(!uniqueAll.length){ out.innerHTML=''; return; }
+  out.innerHTML='<div class="sep">인식된 태그 바코드</div>';
+  uniqueAll.forEach((tag,i)=>{
+    const d=document.createElement('div');d.className='multi-card';
+    d.innerHTML='<svg id="ob_'+i+'"></svg>';out.appendChild(d);
+    // 개별 항목은 항상 CODE128(gen 탭의 fmt 선택과 무관하게 안전)
+    JsBarcode('#ob_'+i,tag,{format:'CODE128',width:2,height:55,displayValue:true,
+      fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'});
+  });
+}
+
+// ===== 수동 문서보정 에디터 =====
+let deState=null;
+function openDocEditor(id){
+  const item=ocrFiles.find(f=>f.id===id);
+  if(!item) return;
+  const ed=document.getElementById('docEditor');
+  const stage=document.getElementById('deStage');
+  const imgEl=document.getElementById('deImg');
+  ed.classList.add('open');
+  history.pushState({docEditor:true},'');
+  const natImg=new Image();
+  natImg.onload=()=>{
+    const nw=natImg.naturalWidth, nh=natImg.naturalHeight;
+    imgEl.src=natImg.src;
+    // 스테이지에 맞춰 표시 크기 계산
+    const sw=stage.clientWidth, sh=stage.clientHeight;
+    const scale=Math.min(sw/nw, sh/nh);
+    const dispW=nw*scale, dispH=nh*scale;
+    imgEl.style.width=dispW+'px'; imgEl.style.height=dispH+'px';
+    const offX=(sw-dispW)/2, offY=(sh-dispH)/2;
+    // 초기 사각형: 15% 안쪽
+    const mx=nw*0.15, my=nh*0.15;
+    const pts=[{x:mx,y:my},{x:nw-mx,y:my},{x:nw-mx,y:nh-my},{x:mx,y:nh-my}];
+    deState={id,img:natImg,nw,nh,scale,offX,offY,pts};
+    layoutDocHandles();
+  };
+  natImg.src=item.url;
+}
+
+function layoutDocHandles(){
+  if(!deState) return;
+  const handles=document.querySelectorAll('#docEditor .de-handle');
+  const poly=document.getElementById('dePoly');
+  const sp=deState.pts.map(p=>({
+    x:deState.offX+p.x*deState.scale,
+    y:deState.offY+p.y*deState.scale
+  }));
+  handles.forEach((h,i)=>{ h.style.left=sp[i].x+'px'; h.style.top=sp[i].y+'px'; });
+  poly.setAttribute('points',sp.map(p=>p.x+','+p.y).join(' '));
+}
+
+// 핸들 드래그(포인터)
+let deDrag=null;
+document.addEventListener('pointerdown',e=>{
+  const h=e.target.closest('#docEditor .de-handle');
+  if(!h||!deState) return;
+  deDrag=parseInt(h.dataset.i,10);
+  h.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+document.addEventListener('pointermove',e=>{
+  if(deDrag===null||!deState) return;
+  const stage=document.getElementById('deStage');
+  const r=stage.getBoundingClientRect();
+  let x=(e.clientX-r.left-deState.offX)/deState.scale;
+  let y=(e.clientY-r.top-deState.offY)/deState.scale;
+  x=Math.max(0,Math.min(deState.nw,x));
+  y=Math.max(0,Math.min(deState.nh,y));
+  deState.pts[deDrag]={x,y};
+  layoutDocHandles();
+});
+document.addEventListener('pointerup',()=>{ deDrag=null; });
+
+function closeDocEditor(){
+  document.getElementById('docEditor').classList.remove('open');
+  deState=null; deDrag=null;
+  if(history.state&&history.state.docEditor) history.back();
+}
+
+async function confirmDocEditor(){
+  if(!deState){ closeDocEditor(); return; }
+  try{
+    await loadOpenCV();
+    const canvas=warpToCanvas(deState.img, deState.pts);
+    const symbols=await scanBarcodeImg(canvas);
+    const item=ocrFiles.find(f=>f.id===deState.id);
+    if(symbols.length && item){
+      item.words=symbols.map(s=>({
+        text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+        conf:100,isBc:true,bcType:s.type
+      })).filter(w=>w.text.length>=2);
+      if(item.words.length){
+        item.failed=false;
+        item.status='수동 보정 후 인식 완료 ('+item.words.length+'개)';
+        closeDocEditor();
+        renderQueue(); renderFailed(); refreshOcrOutputs();
+        toast('인식 성공: '+item.words.map(w=>w.text).join(', '));
+        return;
+      }
+    }
+    toast('인식 실패 — 네 모서리를 코드에 더 정확히 맞춰보세요');
+  }catch(e){ toast('보정 실패: '+e.message); }
 }
 
 // ===== 다운로드/공유 =====
@@ -1206,8 +1361,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.6';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v26';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.7';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v27';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1316,6 +1471,11 @@ async function bandRescue(file,worker){
 
 async function scanBarcode(file){
   const img=await fileToImage(file);
+  return scanBarcodeImg(img);
+}
+
+// 이미지 또는 캔버스를 받아 바코드/QR 디코딩(자동 문서보정 결과에도 재사용)
+async function scanBarcodeImg(img){
   // 중요: 요즘 폰 사진은 4000px+ 라 zbar가 풀해상도에서 오히려 실패함.
   // 목표 너비(1600/1000/2000px)로 '정규화'한 뒤 여러 각도로 시도 → 인식률↑, 속도↑.
   // 30° 간격 회전으로 비스듬히(평면 기울기) 찍힌 바코드도 대응(원근 왜곡은 라이브 스캔 권장).
@@ -1388,6 +1548,103 @@ function rotateImageByAngle(file,angle){
     };
     img.src=url;
   });
+}
+
+// ===== 문서 스캔(갤럭시 갤러리 스캔 방식): OpenCV.js 원근 보정 =====
+let _cvPromise=null;
+function loadOpenCV(){
+  if(window.cv && cv.Mat) return Promise.resolve();
+  if(_cvPromise) return _cvPromise;
+  _cvPromise=new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='https://docs.opencv.org/4.10.0/opencv.js';
+    s.async=true;
+    s.onload=()=>{
+      // opencv.js는 로드 후 런타임 초기화가 끝나야 사용 가능
+      if(window.cv && cv.Mat){ resolve(); return; }
+      cv['onRuntimeInitialized']=()=>resolve();
+    };
+    s.onerror=()=>reject(new Error('OpenCV 로드 실패'));
+    document.head.appendChild(s);
+  });
+  return _cvPromise;
+}
+
+// 사각형 4점을 좌상/우상/우하/좌하 순으로 정렬
+function orderQuad(pts){
+  const p=pts.slice();
+  const sum=p.map(q=>q.x+q.y), diff=p.map(q=>q.y-q.x);
+  const tl=p[sum.indexOf(Math.min(...sum))];
+  const br=p[sum.indexOf(Math.max(...sum))];
+  const tr=p[diff.indexOf(Math.min(...diff))];
+  const bl=p[diff.indexOf(Math.max(...diff))];
+  return [tl,tr,br,bl];
+}
+
+// 원본 이미지 + 4점(원본 좌표) → 정면 보정된 캔버스
+function warpToCanvas(srcImg, quad){
+  const [tl,tr,br,bl]=orderQuad(quad);
+  const wA=Math.hypot(br.x-bl.x,br.y-bl.y), wB=Math.hypot(tr.x-tl.x,tr.y-tl.y);
+  const hA=Math.hypot(tr.x-br.x,tr.y-br.y), hB=Math.hypot(tl.x-bl.x,tl.y-bl.y);
+  const W=Math.max(8,Math.round(Math.max(wA,wB)));
+  const H=Math.max(8,Math.round(Math.max(hA,hB)));
+  const src=cv.imread(srcImg);
+  const dst=new cv.Mat();
+  const srcTri=cv.matFromArray(4,1,cv.CV_32FC2,[tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y]);
+  const dstTri=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,W,0,W,H,0,H]);
+  const M=cv.getPerspectiveTransform(srcTri,dstTri);
+  cv.warpPerspective(src,dst,M,new cv.Size(W,H),cv.INTER_LINEAR,cv.BORDER_CONSTANT,new cv.Scalar());
+  const out=document.createElement('canvas');
+  out.width=W;out.height=H;
+  cv.imshow(out,dst);
+  src.delete();dst.delete();srcTri.delete();dstTri.delete();M.delete();
+  return out;
+}
+
+// 자동 문서 경계 감지 → 가장 큰 사각형 윤곽 찾기(원본 좌표 4점 반환, 없으면 null)
+function detectDocQuad(srcImg){
+  const src=cv.imread(srcImg);
+  const maxSide=Math.max(src.cols,src.rows);
+  const scale=maxSide>1200?1200/maxSide:1;
+  const small=new cv.Mat();
+  cv.resize(src,small,new cv.Size(Math.round(src.cols*scale),Math.round(src.rows*scale)));
+  const gray=new cv.Mat(),blur=new cv.Mat(),edge=new cv.Mat();
+  cv.cvtColor(small,gray,cv.COLOR_RGBA2GRAY);
+  cv.GaussianBlur(gray,blur,new cv.Size(5,5),0);
+  cv.Canny(blur,edge,50,150);
+  const k=cv.Mat.ones(5,5,cv.CV_8U);
+  cv.dilate(edge,edge,k);
+  const contours=new cv.MatVector(),hier=new cv.Mat();
+  cv.findContours(edge,contours,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+  const imgArea=small.cols*small.rows;
+  let best=null,bestArea=0;
+  for(let i=0;i<contours.size();i++){
+    const c=contours.get(i);
+    const peri=cv.arcLength(c,true);
+    const approx=new cv.Mat();
+    cv.approxPolyDP(c,approx,0.02*peri,true);
+    if(approx.rows===4 && cv.isContourConvex(approx)){
+      const area=Math.abs(cv.contourArea(approx));
+      if(area>bestArea && area>imgArea*0.15){
+        bestArea=area;
+        const pts=[];
+        for(let r=0;r<4;r++) pts.push({x:approx.data32S[r*2]/scale,y:approx.data32S[r*2+1]/scale});
+        best=pts;
+      }
+    }
+    approx.delete();c.delete();
+  }
+  src.delete();small.delete();gray.delete();blur.delete();edge.delete();k.delete();contours.delete();hier.delete();
+  return best;
+}
+
+// 파일 → 자동 문서보정 캔버스(실패 시 null). 감지된 사각형도 함께 반환.
+async function autoDocScan(file){
+  await loadOpenCV();
+  const img=await fileToImage(file);
+  const quad=detectDocQuad(img);
+  if(!quad) return null;
+  return {canvas:warpToCanvas(img,quad),quad};
 }
 
 // 온/오프라인 표시

@@ -1,4 +1,4 @@
-const CACHE = 'barcode-v26';
+const CACHE = 'barcode-v27';
 
 // 앱 핵심(로컬) — 반드시 캐시. 이 중 하나라도 실패하면 install 실패하므로 로컬만 둠.
 const CORE = [
@@ -11,6 +11,7 @@ const CDN = [
   'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
   'https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/inlined/index.js',
   'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js'
+  // OpenCV.js(~8MB)는 install 때 받지 않고, 처음 사용할 때 fetch 핸들러가 캐시함
 ];
 
 self.addEventListener('install', e => {
