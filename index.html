@@ -262,7 +262,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.1</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.2</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -1452,8 +1452,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v4.1';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v31';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.2';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v32';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1697,23 +1697,43 @@ function orderQuad(pts){
   return [tl,tr,br,bl];
 }
 
-// 원본 이미지 + 4점(원본 좌표) → 정면 보정된 캔버스
+// 비스듬한(회전된) 사각형도 안정적으로 정렬: 무게중심 기준 시계방향 정렬 후
+// '긴 변'을 가로(상단)로 매핑 → 바코드가 항상 수평이 되도록.
+function orderQuadRobust(pts){
+  const cx=pts.reduce((a,p)=>a+p.x,0)/4, cy=pts.reduce((a,p)=>a+p.y,0)/4;
+  const s=pts.slice().sort((a,b)=>Math.atan2(a.y-cy,a.x-cx)-Math.atan2(b.y-cy,b.x-cx));
+  const len=i=>Math.hypot(s[(i+1)%4].x-s[i].x, s[(i+1)%4].y-s[i].y);
+  // 마주보는 두 변쌍 중 어느 쪽이 더 긴지에 따라 시작점 선택(긴 변이 상단)
+  const pairA=len(0)+len(2), pairB=len(1)+len(3);
+  const st=pairA>=pairB?0:1;
+  return [s[st],s[(st+1)%4],s[(st+2)%4],s[(st+3)%4]];
+}
+
+// 원본 이미지 + 4점(원본 좌표) → 정면 보정된 캔버스(좌우 여백=Quiet Zone 포함)
 function warpToCanvas(srcImg, quad){
-  const [tl,tr,br,bl]=orderQuad(quad);
+  const [tl,tr,br,bl]=orderQuadRobust(quad);
   const wA=Math.hypot(br.x-bl.x,br.y-bl.y), wB=Math.hypot(tr.x-tl.x,tr.y-tl.y);
   const hA=Math.hypot(tr.x-br.x,tr.y-br.y), hB=Math.hypot(tl.x-bl.x,tl.y-bl.y);
-  const W=Math.max(8,Math.round(Math.max(wA,wB)));
-  const H=Math.max(8,Math.round(Math.max(hA,hB)));
+  const W=Math.max(8,Math.round((wA+wB)/2));
+  const H=Math.max(8,Math.round((hA+hB)/2));
   const src=cv.imread(srcImg);
   const dst=new cv.Mat();
   const srcTri=cv.matFromArray(4,1,cv.CV_32FC2,[tl.x,tl.y,tr.x,tr.y,br.x,br.y,bl.x,bl.y]);
   const dstTri=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,W,0,W,H,0,H]);
   const M=cv.getPerspectiveTransform(srcTri,dstTri);
   cv.warpPerspective(src,dst,M,new cv.Size(W,H),cv.INTER_LINEAR,cv.BORDER_CONSTANT,new cv.Scalar());
-  const out=document.createElement('canvas');
-  out.width=W;out.height=H;
-  cv.imshow(out,dst);
+  const warp=document.createElement('canvas');
+  warp.width=W;warp.height=H;
+  cv.imshow(warp,dst);
   src.delete();dst.delete();srcTri.delete();dstTri.delete();M.delete();
+  // 1D 바코드 필수 여백(Quiet Zone): 흰 배경으로 사방 패딩 추가
+  const padX=Math.max(40,Math.round(H*1.0));   // 좌우는 넉넉히
+  const padY=Math.max(20,Math.round(H*0.4));
+  const out=document.createElement('canvas');
+  out.width=W+padX*2; out.height=H+padY*2;
+  const c=out.getContext('2d');
+  c.fillStyle='#fff'; c.fillRect(0,0,out.width,out.height);
+  c.drawImage(warp,padX,padY);
   return out;
 }
 
