@@ -251,7 +251,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.8</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.9</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -1372,8 +1372,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.8';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v28';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.9';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v29';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1563,21 +1563,46 @@ function rotateImageByAngle(file,angle){
 
 // ===== 문서 스캔(갤럭시 갤러리 스캔 방식): OpenCV.js 원근 보정 =====
 let _cvPromise=null;
+// 여러 CDN을 순서대로 시도(단일 파일 빌드 우선 — 별도 wasm 불필요)
+const OPENCV_URLS=[
+  'https://docs.opencv.org/4.5.0/opencv.js',
+  'https://cdn.jsdelivr.net/npm/opencv.js@1.2.1/opencv.js',
+  'https://docs.opencv.org/4.8.0/opencv.js',
+  'https://docs.opencv.org/4.10.0/opencv.js'
+];
+function _tryLoadCV(url){
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src=url; s.async=true;
+    let done=false;
+    // 런타임 초기화까지 최대 25초 대기
+    const timer=setTimeout(()=>{ if(!done){ done=true; reject(new Error('시간초과')); } },25000);
+    const ok=()=>{ if(done) return; done=true; clearTimeout(timer); resolve(); };
+    s.onload=()=>{
+      if(window.cv && cv.Mat){ ok(); return; }
+      if(window.cv){ cv['onRuntimeInitialized']=ok; return; }
+      // 일부 빌드는 Module 패턴 — 잠시 폴링
+      let n=0; const iv=setInterval(()=>{
+        if(window.cv && cv.Mat){ clearInterval(iv); ok(); }
+        else if(++n>240){ clearInterval(iv); }   // ~24초
+      },100);
+    };
+    s.onerror=()=>{ if(!done){ done=true; clearTimeout(timer); reject(new Error('네트워크')); } s.remove(); };
+    document.head.appendChild(s);
+  });
+}
 function loadOpenCV(){
   if(window.cv && cv.Mat) return Promise.resolve();
   if(_cvPromise) return _cvPromise;
-  _cvPromise=new Promise((resolve,reject)=>{
-    const s=document.createElement('script');
-    s.src='https://docs.opencv.org/4.10.0/opencv.js';
-    s.async=true;
-    s.onload=()=>{
-      // opencv.js는 로드 후 런타임 초기화가 끝나야 사용 가능
-      if(window.cv && cv.Mat){ resolve(); return; }
-      cv['onRuntimeInitialized']=()=>resolve();
-    };
-    s.onerror=()=>reject(new Error('OpenCV 로드 실패'));
-    document.head.appendChild(s);
-  });
+  _cvPromise=(async()=>{
+    let lastErr='';
+    for(const url of OPENCV_URLS){
+      try{ await _tryLoadCV(url); if(window.cv&&cv.Mat) return; }
+      catch(e){ lastErr=url.split('/').slice(2,3)[0]+' '+(e.message||e); }
+    }
+    _cvPromise=null;   // 다음에 재시도 가능하도록
+    throw new Error('모든 CDN 실패('+lastErr+')');
+  })();
   return _cvPromise;
 }
 
