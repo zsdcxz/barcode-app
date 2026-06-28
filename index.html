@@ -156,6 +156,14 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
 #docEditor .de-presets{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;
   padding:8px 12px;background:rgba(0,0,0,.5)}
 .de-stage.placing{cursor:crosshair}
+/* 보정/스캔 진행 스피너 오버레이 */
+#deBusy{position:absolute;inset:0;display:none;flex-direction:column;gap:14px;
+  align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:5}
+#deBusy.on{display:flex}
+.de-spin{width:54px;height:54px;border:5px solid rgba(255,255,255,.25);
+  border-top-color:#0078d4;border-radius:50%;animation:despin 0.8s linear infinite}
+@keyframes despin{to{transform:rotate(360deg)}}
+.de-busy-text{color:#fff;font-size:14px;font-weight:600}
 .de-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none}
 .de-stage img{max-width:100%;max-height:100%;object-fit:contain;display:block;-webkit-user-select:none;user-select:none;pointer-events:none}
 .de-stage svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
@@ -254,7 +262,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.0</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.1</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -458,6 +466,7 @@ textarea::placeholder{color:#444}
     <div class="de-handle" data-i="1"></div>
     <div class="de-handle" data-i="2"></div>
     <div class="de-handle" data-i="3"></div>
+    <div id="deBusy"><div class="de-spin"></div><div class="de-busy-text" id="deBusyText">스캔 중...</div></div>
   </div>
 </div>
 
@@ -1354,12 +1363,21 @@ async function confirmDocEditor(){
   }
   const goBtn=document.querySelector('#docEditor .de-go');
   if(goBtn) goBtn.disabled=true;
+  const busy=document.getElementById('deBusy');
+  const busyText=document.getElementById('deBusyText');
+  const setBusy=t=>{ if(busyText) busyText.textContent=t; setDeTitle(t); };
+  // 스피너를 먼저 화면에 그린 뒤(한 프레임 양보) 무거운 작업 시작 → '멈춤'처럼 안 보이게
+  const yield2=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(r,0))));
+  busy.classList.add('on');
   try{
-    setDeTitle('OpenCV 준비 중...');
+    setBusy('OpenCV 준비 중...');
+    await yield2();
     await loadOpenCV();
-    setDeTitle('정면 보정 중...');
+    setBusy('정면 보정 중...');
+    await yield2();
     const canvas=warpToCanvas(deState.img, deState.pts);
-    setDeTitle('스캔 중...');
+    setBusy('스캔 중...');
+    await yield2();
     const symbols=await scanBarcodeImg(canvas);
     const item=ocrFiles.find(f=>f.id===deState.id);
     if(symbols.length && item){
@@ -1380,6 +1398,7 @@ async function confirmDocEditor(){
   }catch(e){
     setDeTitle('⚠️ 오류: '+(e.message||e));
   }finally{
+    busy.classList.remove('on');
     if(goBtn) goBtn.disabled=false;
   }
 }
@@ -1433,8 +1452,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v4.0';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v30';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.1';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v31';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
