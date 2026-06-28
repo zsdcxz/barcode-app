@@ -164,6 +164,15 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
   border-top-color:#0078d4;border-radius:50%;animation:despin 0.8s linear infinite}
 @keyframes despin{to{transform:rotate(360deg)}}
 .de-busy-text{color:#fff;font-size:14px;font-weight:600}
+/* 보정 결과 미리보기(디버그) */
+#dePreview{position:absolute;inset:0;display:none;flex-direction:column;
+  background:rgba(0,0,0,.92);z-index:6;padding:12px}
+#dePreview.on{display:flex}
+#dePreview .dp-head{color:#fff;font-size:13px;text-align:center;padding:6px 0 10px}
+#dePreview .dp-imgwrap{flex:1;display:flex;align-items:center;justify-content:center;
+  overflow:auto;background:#222;border-radius:8px}
+#dePreview .dp-imgwrap img{max-width:100%;max-height:100%;object-fit:contain;background:#fff}
+#dePreview .dp-btns{display:flex;gap:8px;justify-content:center;padding-top:10px}
 .de-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none}
 .de-stage img{max-width:100%;max-height:100%;object-fit:contain;display:block;-webkit-user-select:none;user-select:none;pointer-events:none}
 .de-stage svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
@@ -262,7 +271,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.2</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.3</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -467,6 +476,14 @@ textarea::placeholder{color:#444}
     <div class="de-handle" data-i="2"></div>
     <div class="de-handle" data-i="3"></div>
     <div id="deBusy"><div class="de-spin"></div><div class="de-busy-text" id="deBusyText">스캔 중...</div></div>
+    <div id="dePreview">
+      <div class="dp-head"><span id="dpMsg">보정 결과 미리보기</span></div>
+      <div class="dp-imgwrap"><img id="dePreviewImg" src="" alt="보정 결과"></div>
+      <div class="dp-btns">
+        <button class="btn-s" onclick="closeDePreview()">닫기 (다시 편집)</button>
+        <button class="btn-s de-go" onclick="rescanPreview()">다시 스캔</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1349,7 +1366,8 @@ function resetDocPoints(){
 
 function closeDocEditor(){
   document.getElementById('docEditor').classList.remove('open');
-  deState=null; deDrag=null;
+  document.getElementById('dePreview').classList.remove('on');
+  deState=null; deDrag=null; deLastCanvas=null;
   if(history.state&&history.state.docEditor) history.back();
 }
 
@@ -1376,6 +1394,9 @@ async function confirmDocEditor(){
     setBusy('정면 보정 중...');
     await yield2();
     const canvas=warpToCanvas(deState.img, deState.pts);
+    deLastCanvas=canvas;   // 디버그 미리보기/재스캔용 보관
+    // 디버그: 보정 결과를 미리보기로 표시(보정이 제대로 됐는지 눈으로 확인)
+    document.getElementById('dePreviewImg').src=canvas.toDataURL('image/jpeg',0.85);
     setBusy('스캔 중...');
     await yield2();
     const symbols=await scanBarcodeImg(canvas);
@@ -1394,13 +1415,51 @@ async function confirmDocEditor(){
         return;
       }
     }
-    setDeTitle('❌ 인식 실패 — 모서리를 코드에 더 정확히 맞춰 다시 시도');
+    // 실패: 보정 결과 미리보기를 띄워 원인 진단(보정 자체 문제 vs 스캔 실패)
+    showDePreview('❌ 인식 실패 — 아래 보정 결과를 확인하세요. 바코드가 똑바로/선명하면 영역만 조금 넓혀보세요');
   }catch(e){
     setDeTitle('⚠️ 오류: '+(e.message||e));
   }finally{
     busy.classList.remove('on');
     if(goBtn) goBtn.disabled=false;
   }
+}
+
+// 보정 결과 미리보기(디버그)
+let deLastCanvas=null;
+function showDePreview(msg){
+  document.getElementById('dpMsg').textContent=msg||'보정 결과 미리보기';
+  document.getElementById('dePreview').classList.add('on');
+}
+function closeDePreview(){
+  document.getElementById('dePreview').classList.remove('on');
+}
+async function rescanPreview(){
+  if(!deLastCanvas){ closeDePreview(); return; }
+  const busy=document.getElementById('deBusy');
+  busy.classList.add('on');
+  document.getElementById('deBusyText').textContent='다시 스캔 중...';
+  try{
+    await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
+    const symbols=await scanBarcodeImg(deLastCanvas);
+    const item=ocrFiles.find(f=>f.id===(deState&&deState.id));
+    if(symbols.length && item){
+      item.words=symbols.map(s=>({
+        text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+        conf:100,isBc:true,bcType:s.type
+      })).filter(w=>w.text.length>=2);
+      if(item.words.length){
+        item.failed=false;
+        item.status='수동 보정 후 인식 완료 ('+item.words.length+'개)';
+        closeDePreview(); closeDocEditor();
+        renderQueue(); renderFailed(); refreshOcrOutputs();
+        toast('인식 성공: '+item.words.map(w=>w.text).join(', '));
+        return;
+      }
+    }
+    document.getElementById('dpMsg').textContent='❌ 여전히 실패 — 닫고 영역을 다시 맞춰보세요';
+  }catch(e){ document.getElementById('dpMsg').textContent='⚠️ 오류: '+(e.message||e); }
+  finally{ busy.classList.remove('on'); }
 }
 
 // ===== 다운로드/공유 =====
@@ -1452,8 +1511,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v4.2';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v32';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.3';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v33';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
