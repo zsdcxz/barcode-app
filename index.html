@@ -126,6 +126,19 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0
   overflow:hidden;text-overflow:ellipsis}
 .fail-hint{font-size:12px;color:#888;margin-top:10px;line-height:1.5}
 
+/* 연속 합치기 모드 패널 */
+#multiPanel{background:#1a1a1a;border:1px solid #0078d4;border-radius:12px;
+  padding:12px 14px;margin-bottom:14px}
+.multi-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  font-size:12px;color:#bbb;margin-bottom:10px;flex-wrap:wrap}
+.multi-bar #multiCount{color:#0078d4;font-weight:700}
+.multi-sep-wrap{display:flex;align-items:center;gap:6px;font-size:11px;color:#888}
+.multi-sep-wrap select{background:#252525;color:#ddd;border:1px solid #444;
+  border-radius:8px;padding:5px 8px;font-size:12px}
+#multiList .chip .x{color:#e85050;font-weight:700;margin-left:2px}
+.multi-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.multi-empty{font-size:12px;color:#555}
+
 /* 인식 실패 모음 */
 .fail-sep{font-size:13px;color:#e8a050;margin:20px 0 10px;padding-top:16px;
   border-top:1px solid #333;display:flex;align-items:center;gap:6px}
@@ -216,7 +229,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.3</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v3.4</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -249,6 +262,39 @@ textarea::placeholder{color:#444}
 
   <!-- ========== 2. QR/바코드 스캔 ========== -->
   <div class="page" id="pg-scan">
+    <!-- 연속 합치기 모드 -->
+    <div class="ocr-toggle">
+      <div class="ot-text">
+        <div class="ot-title">연속 합치기 모드</div>
+        <div class="ot-sub">여러 개를 연속 스캔해 하나의 바코드로 합칩니다</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="multiSwitch" onchange="toggleMultiMode(this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <!-- 합치기 모드 수집 패널 -->
+    <div id="multiPanel" style="display:none">
+      <div class="multi-bar">
+        <span id="multiCount">0개 수집됨</span>
+        <span class="multi-sep-wrap">구분자:
+          <select id="multiSep" onchange="renderMultiList()">
+            <option value="|">| (막대)</option>
+            <option value=",">, (쉼표)</option>
+            <option value=" ">공백</option>
+            <option value="\n">줄바꿈</option>
+            <option value="">붙여쓰기</option>
+          </select>
+        </span>
+      </div>
+      <div id="multiList" class="chip-list"></div>
+      <div class="multi-actions">
+        <button class="btn-s" onclick="makeMergedBarcode()">합쳐서 바코드 생성</button>
+        <button class="btn-s" onclick="copyMerged()">합친값 복사</button>
+        <button class="btn-s" style="color:#e85050;border-color:#e85050" onclick="clearMulti()">비우기</button>
+      </div>
+    </div>
+
     <div class="perm-box" id="scanPerm">
       <div class="icon">📸</div>
       <p>QR코드 또는 바코드를 카메라로 스캔합니다.<br>카메라 접근 권한이 필요합니다.</p>
@@ -356,6 +402,10 @@ textarea::placeholder{color:#444}
 let fmt='CODE128', scanner=null, deferP=null, camFacing='environment', scanLocked=false;
 let ocrUseText=false;   // 글자 OCR 사용 여부(기본 OFF) — 토글 스위치로 제어
 const ocrFiles=[];
+// 연속 합치기 모드
+let multiMode=false;
+let multiList=[];
+let multiCooldown=false;  // 같은 코드 연속 재인식 방지용 짧은 잠금
 
 // ===== 저장 내역 (localStorage) =====
 const HIST_KEY='bc_history';
@@ -623,6 +673,11 @@ async function startScanner(){
       videoConstraints:{facingMode:camFacing,width:{ideal:1920},height:{ideal:1080}}
     },
     (text,result)=>{
+      if(multiMode){                  // 연속 합치기: 정지하지 않고 목록에 누적
+        if(multiCooldown) return;
+        onMultiDetected(text);
+        return;
+      }
       if(scanLocked) return;          // 1회만: 인식 즉시 자동 촬영
       scanLocked=true;
       onScanDetected(text,result);
@@ -647,6 +702,76 @@ async function onScanDetected(text,result){
   if(snap) downloadImage(snap, text);
   toast('저장됨: '+text);
   if(scanner){ try{await scanner.stop();}catch(e){} try{await scanner.clear();}catch(e){} scanner=null; }
+}
+
+// ===== 연속 합치기 모드 =====
+function toggleMultiMode(on){
+  multiMode=on;
+  document.getElementById('multiPanel').style.display=on?'block':'none';
+  if(on) renderMultiList();
+  toast(on?'연속 합치기 모드 ON':'연속 합치기 모드 OFF');
+}
+
+// 연속 모드에서 코드 인식: 목록에 누적(중복 제외) 후 계속 스캔
+function onMultiDetected(text){
+  const v=(text||'').trim();
+  if(!v) return;
+  if(multiList.includes(v)){ toast('이미 추가됨: '+v); }
+  else{
+    multiList.push(v);
+    renderMultiList();
+    try{ if(navigator.vibrate) navigator.vibrate(60); }catch(e){}
+    toast('추가됨('+multiList.length+'): '+v);
+  }
+  // 같은 코드를 연속으로 다시 잡지 않도록 잠깐 잠금
+  multiCooldown=true;
+  setTimeout(()=>{ multiCooldown=false; },1500);
+}
+
+function renderMultiList(){
+  document.getElementById('multiCount').textContent=multiList.length+'개 수집됨';
+  const el=document.getElementById('multiList');
+  if(!multiList.length){ el.innerHTML='<span class="multi-empty">아직 없음 — 코드를 차례로 비추세요</span>'; return; }
+  el.innerHTML=multiList.map((v,i)=>
+    '<span class="chip">'+escHtml(v)+
+    ' <span class="x" onclick="removeMulti('+i+')">✕</span></span>').join('');
+}
+
+function removeMulti(i){
+  multiList.splice(i,1);
+  renderMultiList();
+}
+
+function clearMulti(){
+  multiList=[];
+  renderMultiList();
+  toast('목록 비움');
+}
+
+function getMergedValue(){
+  let sep=document.getElementById('multiSep').value;
+  if(sep==='\\n') sep='\n';   // select 값의 리터럴 \n 처리
+  return multiList.join(sep);
+}
+
+function copyMerged(){
+  if(!multiList.length){ toast('수집된 코드가 없습니다'); return; }
+  const merged=getMergedValue();
+  navigator.clipboard.writeText(merged).then(()=>toast('합친값 복사됨'));
+}
+
+async function makeMergedBarcode(){
+  if(!multiList.length){ toast('수집된 코드가 없습니다'); return; }
+  const merged=getMergedValue();
+  // 스캐너 정지 후 생성 탭으로
+  if(scanner){ try{await scanner.stop();}catch(e){} try{await scanner.clear();}catch(e){} scanner=null; }
+  document.getElementById('tagIn').value=merged;
+  go('gen',document.querySelectorAll('.nav button')[0]);
+  // CODE128은 임의 ASCII 가능. 합친 문자열을 하나의 바코드로.
+  fmt='CODE128';
+  document.querySelectorAll('.fm').forEach(x=>x.classList.toggle('on',x.dataset.f==='CODE128'));
+  mkBC();
+  toast('합쳐서 바코드 생성됨('+multiList.length+'개)');
 }
 
 // 현재 영상 프레임을 캡처해 결과에 표시. base64 반환.
@@ -1011,8 +1136,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v3.3';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v23';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v3.4';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v24';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
