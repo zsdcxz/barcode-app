@@ -271,7 +271,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.3</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.4</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -1272,9 +1272,9 @@ function openDocEditor(id){
     const dispW=nw*scale, dispH=nh*scale;
     imgEl.style.width=dispW+'px'; imgEl.style.height=dispH+'px';
     const offX=(sw-dispW)/2, offY=(sh-dispH)/2;
-    // 초기: 자동영역 표시하지 않고, 사용자가 직접 4점 탭(빠른 영역 지정)
+    // 초기: 클릭&드래그로 코드 영역 사각형을 그림(또는 프리셋)
     deState={id,img:natImg,nw,nh,scale,offX,offY,pts:[],placing:true};
-    setDeTitle('네 꼭짓점을 차례로 탭하세요 (또는 프리셋)');
+    setDeTitle('코드 영역을 드래그해 사각형을 그리세요');
     layoutDocHandles();
   };
   natImg.src=item.url;
@@ -1307,36 +1307,85 @@ function stageToImgCoord(e){
   return {x:Math.max(0,Math.min(deState.nw,x)),y:Math.max(0,Math.min(deState.nh,y))};
 }
 
-// 핸들 드래그(포인터) + 점 찍기
-let deDrag=null;
+// 점이 사각형(폴리곤) 내부인지 판정
+function pointInQuad(pt,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    if(((yi>pt.y)!==(yj>pt.y)) && (pt.x<(xj-xi)*(pt.y-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+
+// 드래그 상호작용 상태
+let deDrag=null;          // 코너 핸들 인덱스
+let deCreate=null;        // 영역 생성 시작점(img 좌표)
+let deFace=null;          // 면(전체) 이동 시작 포인터(img 좌표)
 document.addEventListener('pointerdown',e=>{
   if(!deState) return;
   const h=e.target.closest('#docEditor .de-handle');
-  if(h){                                  // 조정: 핸들 드래그
+  if(h && !deState.placing){               // 코너 드래그
     deDrag=parseInt(h.dataset.i,10);
     h.setPointerCapture(e.pointerId);
     e.preventDefault();
     return;
   }
-  // 점 찍기: placing 모드 + 스테이지 내부 클릭
-  if(deState.placing && e.target.closest('#deStage')){
-    deState.pts.push(stageToImgCoord(e));
-    if(deState.pts.length>=4){
-      deState.pts=orderQuad(deState.pts);
-      deState.placing=false;
-      setDeTitle('모서리를 드래그해 미세 조정 후 스캔');
-    }else{
-      setDeTitle('꼭짓점 '+deState.pts.length+'/4 — 계속 탭하세요');
-    }
+  if(!e.target.closest('#deStage')) return;
+  const p=stageToImgCoord(e);
+  if(deState.placing){                      // 클릭&드래그로 사각형 생성 시작
+    deCreate=p;
+    deState.pts=[{x:p.x,y:p.y},{x:p.x,y:p.y},{x:p.x,y:p.y},{x:p.x,y:p.y}];
     layoutDocHandles();
+    e.preventDefault();
+    return;
+  }
+  // 영역 확정 상태: 면(안쪽)을 잡으면 전체 이동
+  if(deState.pts.length===4 && pointInQuad(p,deState.pts)){
+    deFace=p;
+    e.preventDefault();
   }
 });
 document.addEventListener('pointermove',e=>{
-  if(deDrag===null||!deState) return;
-  deState.pts[deDrag]=stageToImgCoord(e);
-  layoutDocHandles();
+  if(!deState) return;
+  if(deDrag!==null){                        // 코너 이동
+    deState.pts[deDrag]=stageToImgCoord(e);
+    layoutDocHandles();
+  }else if(deCreate){                        // 사각형 생성 중(드래그)
+    const c=stageToImgCoord(e);
+    const x1=Math.min(deCreate.x,c.x),x2=Math.max(deCreate.x,c.x);
+    const y1=Math.min(deCreate.y,c.y),y2=Math.max(deCreate.y,c.y);
+    deState.pts=[{x:x1,y:y1},{x:x2,y:y1},{x:x2,y:y2},{x:x1,y:y2}];
+    layoutDocHandles();
+  }else if(deFace){                          // 면 드래그로 전체 이동
+    const c=stageToImgCoord(e);
+    let dx=c.x-deFace.x, dy=c.y-deFace.y;
+    // 경계 밖으로 나가지 않게 보정
+    const xs=deState.pts.map(p=>p.x), ys=deState.pts.map(p=>p.y);
+    dx=Math.max(-Math.min(...xs),Math.min(deState.nw-Math.max(...xs),dx));
+    dy=Math.max(-Math.min(...ys),Math.min(deState.nh-Math.max(...ys),dy));
+    deState.pts=deState.pts.map(p=>({x:p.x+dx,y:p.y+dy}));
+    deFace=c;
+    layoutDocHandles();
+  }
 });
-document.addEventListener('pointerup',()=>{ deDrag=null; });
+document.addEventListener('pointerup',()=>{
+  if(deCreate){
+    deCreate=null;
+    // 너무 작게 그렸으면 다시 그리기 대기, 충분하면 확정
+    const xs=deState.pts.map(p=>p.x), ys=deState.pts.map(p=>p.y);
+    const w=Math.max(...xs)-Math.min(...xs), h=Math.max(...ys)-Math.min(...ys);
+    if(w>deState.nw*0.03 && h>deState.nh*0.02){
+      deState.pts=orderQuad(deState.pts);
+      deState.placing=false;
+      setDeTitle('모서리 또는 안쪽(면)을 드래그해 조정 후 스캔');
+    }else{
+      deState.pts=[];
+      setDeTitle('코드 영역을 드래그해 사각형을 그리세요');
+    }
+    layoutDocHandles();
+  }
+  deDrag=null; deFace=null;
+});
 
 // 프리셋: 가운데에 기본 영역 배치(이후 드래그로 미세조정)
 function setDocPreset(wRatio,hRatio){
@@ -1359,8 +1408,8 @@ function presetQR(){
 }
 function resetDocPoints(){
   if(!deState) return;
-  deState.pts=[]; deState.placing=true;
-  setDeTitle('네 꼭짓점을 차례로 탭하세요 (또는 프리셋)');
+  deState.pts=[]; deState.placing=true; deCreate=null; deFace=null;
+  setDeTitle('코드 영역을 드래그해 사각형을 그리세요');
   layoutDocHandles();
 }
 
@@ -1399,7 +1448,7 @@ async function confirmDocEditor(){
     document.getElementById('dePreviewImg').src=canvas.toDataURL('image/jpeg',0.85);
     setBusy('스캔 중...');
     await yield2();
-    const symbols=await scanBarcodeImg(canvas);
+    const symbols=await scanWarpedBoth(canvas);
     const item=ocrFiles.find(f=>f.id===deState.id);
     if(symbols.length && item){
       item.words=symbols.map(s=>({
@@ -1441,7 +1490,7 @@ async function rescanPreview(){
   document.getElementById('deBusyText').textContent='다시 스캔 중...';
   try{
     await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
-    const symbols=await scanBarcodeImg(deLastCanvas);
+    const symbols=await scanWarpedBoth(deLastCanvas);
     const item=ocrFiles.find(f=>f.id===(deState&&deState.id));
     if(symbols.length && item){
       item.words=symbols.map(s=>({
@@ -1511,8 +1560,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v4.3';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v33';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.4';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v34';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1794,6 +1843,37 @@ function warpToCanvas(srcImg, quad){
   c.fillStyle='#fff'; c.fillRect(0,0,out.width,out.height);
   c.drawImage(warp,padX,padY);
   return out;
+}
+
+// 저대비(회색 라벨) 대응: 그레이스케일 + 대비 스트레치 한 캔버스 반환
+function enhanceCanvas(srcCanvas){
+  const c=document.createElement('canvas');
+  c.width=srcCanvas.width; c.height=srcCanvas.height;
+  const ctx=c.getContext('2d');
+  ctx.drawImage(srcCanvas,0,0);
+  const id=ctx.getImageData(0,0,c.width,c.height), d=id.data;
+  let mn=255,mx=0;
+  const g=new Float32Array(c.width*c.height);
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    const v=d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114;
+    g[j]=v; if(v<mn)mn=v; if(v>mx)mx=v;
+  }
+  const range=Math.max(1,mx-mn);
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    let v=(g[j]-mn)/range*255;
+    v=Math.max(0,Math.min(255,v));
+    d[i]=d[i+1]=d[i+2]=v;
+  }
+  ctx.putImageData(id,0,0);
+  return c;
+}
+
+// 보정 캔버스를 원본 + 대비강화 두 가지로 스캔(저대비 DataMatrix/QR 대응)
+async function scanWarpedBoth(canvas){
+  let r=await scanBarcodeImg(canvas);
+  if(r.length) return r;
+  try{ r=await scanBarcodeImg(enhanceCanvas(canvas)); }catch(e){}
+  return r;
 }
 
 // 자동 문서 경계 감지 → 가장 큰 사각형 윤곽 찾기(원본 좌표 4점 반환, 없으면 null)
