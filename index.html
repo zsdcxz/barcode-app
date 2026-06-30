@@ -271,7 +271,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.6</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.7</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -734,12 +734,22 @@ function renderCode(value, format){
     '<button class="btn-s" onclick="sharePNG()">공유</button></div>';
   if(format==='QR'){
     // QR은 대소문자/구분자/줄바꿈 보존(스캔 시 줄바꿈=Enter → 엑셀 다음 행)
-    o.innerHTML='<div class="bc-card"><div id="qrHolder"></div></div>'+actions;
+    o.innerHTML='<div class="bc-card" style="padding:10px"><div id="qrHolder"></div></div>'+actions+
+      '<div class="ptext" style="margin-top:6px">데이터가 많으면 화면 밝기를 높이고 스캐너를 가까이/천천히 비추세요</div>';
     try{
       const writer=new ZXing.BrowserQRCodeSvgWriter();
-      const svg=writer.write(value,300,300);
+      // 오류정정 L(모듈 수↓ → 모듈 크게) + 여백 확보 → 화면 스캔 오독 방지
+      let hints=null;
+      try{
+        hints=new Map();
+        hints.set(ZXing.EncodeHintType.ERROR_CORRECTION,'L');
+        hints.set(ZXing.EncodeHintType.MARGIN,2);
+      }catch(e){ hints=null; }
+      const svg = hints ? writer.write(value,512,512,hints) : writer.write(value,512,512);
       svg.setAttribute('id','bcSvg');
-      svg.style.background='#fff';svg.style.maxWidth='100%';
+      // 화면에서 최대한 크게 표시(모듈을 물리적으로 키워 인식률↑)
+      svg.style.background='#fff';svg.style.width='100%';svg.style.height='auto';
+      svg.style.maxWidth='92vw';svg.style.imageRendering='pixelated';
       document.getElementById('qrHolder').appendChild(svg);
     }catch(e){ toast('QR 생성 실패: '+e.message); }
     return;
@@ -1583,8 +1593,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v4.6';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v36';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.7';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v37';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
