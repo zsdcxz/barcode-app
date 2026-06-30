@@ -271,7 +271,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.4</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.5</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -305,10 +305,10 @@ textarea::placeholder{color:#444}
     <div class="merge-row">
       <span class="ms-label">구분자</span>
       <select id="genMergeSep">
+        <option value="\n">줄바꿈(엑셀 행)</option>
         <option value="|">| (막대)</option>
         <option value=",">, (쉼표)</option>
         <option value=" ">공백</option>
-        <option value="\n">줄바꿈</option>
         <option value="">붙여쓰기</option>
       </select>
       <button class="btn-s" onclick="mergeFromBatch('CODE128')">합쳐서 바코드</button>
@@ -335,10 +335,10 @@ textarea::placeholder{color:#444}
         <span id="multiCount">0개 수집됨</span>
         <span class="multi-sep-wrap">구분자:
           <select id="multiSep" onchange="renderMultiList()">
+            <option value="\n">줄바꿈(엑셀 행)</option>
             <option value="|">| (막대)</option>
             <option value=",">, (쉼표)</option>
             <option value=" ">공백</option>
-            <option value="\n">줄바꿈</option>
             <option value="">붙여쓰기</option>
           </select>
         </span>
@@ -423,10 +423,10 @@ textarea::placeholder{color:#444}
     <div id="ocrMergeRow" class="merge-row" style="display:none">
       <span class="ms-label">인식값 합치기 · 구분자</span>
       <select id="ocrMergeSep">
+        <option value="\n">줄바꿈(엑셀 행)</option>
         <option value="|">| (막대)</option>
         <option value=",">, (쉼표)</option>
         <option value=" ">공백</option>
-        <option value="\n">줄바꿈</option>
         <option value="">붙여쓰기</option>
       </select>
       <button class="btn-s" onclick="mergeOcrResults('CODE128')">합쳐서 바코드</button>
@@ -712,27 +712,36 @@ async function checkCamPermission(){
 function mkBC(){
   const raw=document.getElementById('tagIn').value.trim();
   if(!raw)return;
+  renderCode(raw, fmt);
+}
+
+// 명시한 값으로 직접 코드 생성(입력칸을 거치지 않음 → 줄바꿈 등 보존)
+function renderCode(value, format){
+  if(!value && value!=='') return;
   const o=document.getElementById('bcOut');
   const actions='<div class="bc-actions">'+
     '<button class="btn-s" onclick="dlPNG()">PNG 저장</button>'+
     '<button class="btn-s" onclick="dlSVG()">SVG 저장</button>'+
     '<button class="btn-s" onclick="sharePNG()">공유</button></div>';
-  if(fmt==='QR'){
-    // QR은 대소문자/구분자 보존(긴 합친값에 유리)
+  if(format==='QR'){
+    // QR은 대소문자/구분자/줄바꿈 보존(스캔 시 줄바꿈=Enter → 엑셀 다음 행)
     o.innerHTML='<div class="bc-card"><div id="qrHolder"></div></div>'+actions;
     try{
       const writer=new ZXing.BrowserQRCodeSvgWriter();
-      const svg=writer.write(raw,300,300);
+      const svg=writer.write(value,300,300);
       svg.setAttribute('id','bcSvg');
       svg.style.background='#fff';svg.style.maxWidth='100%';
       document.getElementById('qrHolder').appendChild(svg);
     }catch(e){ toast('QR 생성 실패: '+e.message); }
     return;
   }
-  const tag=raw.toUpperCase();
+  // 1D 바코드: 단일 입력은 대문자화, 합친값(줄바꿈 포함)은 그대로 인코딩
+  const tag=value.includes('\n')?value:value.toUpperCase();
   o.innerHTML='<div class="bc-card"><svg id="bcSvg"></svg></div>'+actions;
-  JsBarcode('#bcSvg',tag,{format:fmt,width:2,height:80,displayValue:true,
-    fontSize:18,font:"Consolas,monospace",margin:10,background:'#fff',lineColor:'#000'});
+  try{
+    JsBarcode('#bcSvg',tag,{format:format,width:2,height:80,displayValue:true,
+      fontSize:18,font:"Consolas,monospace",margin:10,background:'#fff',lineColor:'#000'});
+  }catch(e){ toast('바코드 생성 실패: '+e.message); }
 }
 
 function mkBatch(){
@@ -885,12 +894,14 @@ function generateMerged(values, sep, format){
   if(!list.length){ toast('합칠 값이 없습니다'); return; }
   let s=sep; if(s==='\\n') s='\n';   // select의 리터럴 \n → 실제 줄바꿈
   const merged=list.join(s);
-  document.getElementById('tagIn').value=merged;
+  // 입력칸(input)은 줄바꿈을 제거하므로 표시용으로만 사용하고, 생성은 merged로 직접
+  document.getElementById('tagIn').value=merged.replace(/\n/g,' ');
   fmt=format;
   document.querySelectorAll('.fm').forEach(x=>x.classList.toggle('on',x.dataset.f===format));
   go('gen',document.querySelectorAll('.nav button')[0]);
-  mkBC();
-  toast('합쳐서 '+(format==='QR'?'QR코드':'바코드')+' 생성됨('+list.length+'개)');
+  renderCode(merged, format);   // 줄바꿈 포함 원본 값으로 직접 생성
+  const nl=s==='\n';
+  toast('합쳐서 '+(format==='QR'?'QR코드':'바코드')+' 생성됨('+list.length+'개)'+(nl?' · 줄바꿈 포함':''));
 }
 
 // 스캔 탭(연속 합치기) → 공용 함수 호출
@@ -1560,8 +1571,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v4.4';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v34';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.5';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v35';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
