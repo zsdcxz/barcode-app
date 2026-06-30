@@ -1,4 +1,4 @@
-const CACHE = 'barcode-v35';
+const CACHE = 'barcode-v36';
 
 // 앱 핵심(로컬) — 반드시 캐시. 이 중 하나라도 실패하면 install 실패하므로 로컬만 둠.
 const CORE = [
