@@ -220,7 +220,8 @@ textarea{width:100%;height:90px;padding:12px;font-family:Consolas,monospace;font
 textarea::placeholder{color:#444}
 
 .multi-card{background:#fff;border-radius:12px;padding:18px 14px;margin-bottom:10px;
-  text-align:center;box-shadow:0 3px 14px rgba(0,0,0,.4)}
+  text-align:center;box-shadow:0 3px 14px rgba(0,0,0,.4);overflow:hidden}
+.multi-card svg{display:block;margin:0 auto;max-width:100%;height:auto}
 
 /* 저장 내역 */
 .hist-empty{text-align:center;color:#555;padding:40px 0;font-size:14px}
@@ -271,7 +272,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.7</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.8</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -1593,8 +1594,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v4.7';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v37';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.8';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v38';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
