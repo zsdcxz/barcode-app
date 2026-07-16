@@ -222,6 +222,18 @@ textarea::placeholder{color:#444}
 .multi-card{background:#fff;border-radius:12px;padding:18px 14px;margin-bottom:10px;
   text-align:center;box-shadow:0 3px 14px rgba(0,0,0,.4);overflow:hidden}
 .multi-card svg{display:block;margin:0 auto;max-width:100%;height:auto}
+/* 바코드 집중모드 */
+.oc-card{cursor:pointer;transition:.15s;position:relative}
+.oc-card:active{transform:scale(.99)}
+.oc-focus{outline:3px solid #0078d4;outline-offset:-1px}
+.oc-tip{font-size:11px;color:#0078d4;font-weight:700;margin-bottom:8px}
+.oc-dim{background:#171717;border:1px dashed #333;box-shadow:none;
+  display:flex;align-items:center;justify-content:center;min-height:70px}
+.oc-msg{color:#666;font-size:13px;font-weight:600}
+.oc-done{background:#1f7a3d;box-shadow:0 3px 14px rgba(31,122,61,.4);
+  display:flex;align-items:center;justify-content:center;min-height:70px}
+.oc-badge{color:#fff;font-size:14px;font-weight:700;font-family:Consolas,monospace;
+  letter-spacing:1px;text-align:center;word-break:break-all;padding:0 8px}
 
 /* 저장 내역 */
 .hist-empty{text-align:center;color:#555;padding:40px 0;font-size:14px}
@@ -272,21 +284,21 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.8</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v4.9</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
 <div class="wrap">
   <!-- 네비게이션 -->
   <div class="nav">
-    <button class="on" onclick="go('gen',this)">바코드 생성</button>
+    <button onclick="go('gen',this)">바코드 생성</button>
     <button onclick="go('scan',this)">QR/바코드 스캔</button>
     <button onclick="go('hist',this)" id="navHist">저장 내역</button>
-    <button onclick="go('ocr',this)">사진 OCR</button>
+    <button class="on" onclick="go('ocr',this)">사진 OCR</button>
   </div>
 
   <!-- ========== 1. 바코드 생성 ========== -->
-  <div class="page on" id="pg-gen">
+  <div class="page" id="pg-gen">
     <div class="fmts">
       <button class="fm on" data-f="CODE128" onclick="sf(this)">Code 128</button>
       <button class="fm" data-f="CODE39" onclick="sf(this)">Code 39</button>
@@ -392,7 +404,7 @@ textarea::placeholder{color:#444}
   </div>
 
   <!-- ========== 3. 사진 OCR ========== -->
-  <div class="page" id="pg-ocr">
+  <div class="page on" id="pg-ocr">
     <div class="ocr-upload" id="ocrUpload">
       <input type="file" accept="image/*" multiple onchange="addPhotos(event)">
       <div class="icon">🖼️</div>
@@ -1270,20 +1282,62 @@ async function runBatchOCR(){
 }
 
 // 인식된 값들로 개별 바코드 + 합치기 행 갱신(자동 인식/수동 보정 후 공통 사용)
+// 인식된 태그 목록 + 집중모드 상태
+let ocrTags=[];
+let ocrFocusIndex=null;          // 현재 집중 중인 바코드(없으면 null)
+const ocrScanned=new Set();      // 집중 완료(스캔완료)된 인덱스
+
 function refreshOcrOutputs(){
   const allWords=ocrFiles.filter(f=>!f.failed).flatMap(f=>f.words).map(w=>w.text);
-  const uniqueAll=[...new Set(allWords)];
-  document.getElementById('ocrMergeRow').style.display=uniqueAll.length?'flex':'none';
+  ocrTags=[...new Set(allWords)];
+  ocrFocusIndex=null; ocrScanned.clear();   // 새 인식 결과면 상태 초기화
+  document.getElementById('ocrMergeRow').style.display=ocrTags.length?'flex':'none';
+  renderOcrCards();
+}
+
+// 집중모드 상태를 반영해 인식된 바코드 카드 렌더
+function renderOcrCards(){
   const out=document.getElementById('ocrBcOut');
-  if(!uniqueAll.length){ out.innerHTML=''; return; }
-  out.innerHTML='<div class="sep">인식된 태그 바코드</div>';
-  uniqueAll.forEach((tag,i)=>{
-    const d=document.createElement('div');d.className='multi-card';
-    d.innerHTML='<svg id="ob_'+i+'"></svg>';out.appendChild(d);
-    // 개별 항목은 항상 CODE128(gen 탭의 fmt 선택과 무관하게 안전)
-    JsBarcode('#ob_'+i,tag,{format:'CODE128',width:2,height:55,displayValue:true,
-      fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'});
+  if(!ocrTags.length){ out.innerHTML=''; return; }
+  let html='<div class="sep">인식된 태그 바코드 (탭하면 집중모드)</div>';
+  ocrTags.forEach((tag,i)=>{
+    const scanned=ocrScanned.has(i);
+    const focused=ocrFocusIndex===i;
+    if(scanned){                                   // 스캔완료: 초록 배경 + 문구
+      html+='<div class="multi-card oc-card oc-done" onclick="tapOcrCard('+i+')">'+
+        '<div class="oc-badge">✅ 스캔 완료 · '+escHtml(tag)+'</div></div>';
+    }else if(ocrFocusIndex!==null && !focused){    // 집중모드 중 다른 카드: 문구만
+      html+='<div class="multi-card oc-card oc-dim" onclick="tapOcrCard('+i+')">'+
+        '<div class="oc-msg">🔒 집중모드 사용중</div></div>';
+    }else{                                          // 일반 또는 집중 대상: 바코드 표시
+      html+='<div class="multi-card oc-card'+(focused?' oc-focus':'')+'" onclick="tapOcrCard('+i+')">'+
+        (focused?'<div class="oc-tip">🔍 바코드 집중모드 — 다시 탭하면 완료</div>':'')+
+        '<svg id="ob_'+i+'"></svg></div>';
+    }
   });
+  out.innerHTML=html;
+  // 보이는 바코드만 실제 렌더
+  ocrTags.forEach((tag,i)=>{
+    if(ocrScanned.has(i)) return;
+    if(ocrFocusIndex!==null && ocrFocusIndex!==i) return;
+    const el=document.getElementById('ob_'+i);
+    if(el) try{ JsBarcode(el,tag,{format:'CODE128',width:2,height:55,displayValue:true,
+      fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'}); }catch(e){}
+  });
+}
+
+// 바코드 집중모드 토글
+function tapOcrCard(i){
+  if(ocrFocusIndex===i){
+    // 같은 카드 재탭 → 집중모드 해제 + 스캔완료
+    ocrScanned.add(i); ocrFocusIndex=null;
+  }else{
+    // 다른 카드(또는 최초) → 기존 집중은 완료 처리, 새 카드 집중 진입
+    if(ocrFocusIndex!==null) ocrScanned.add(ocrFocusIndex);
+    ocrScanned.delete(i);            // 새로 집중하는 카드는 완료표시 해제
+    ocrFocusIndex=i;
+  }
+  renderOcrCards();
 }
 
 // ===== 수동 문서보정 에디터 =====
@@ -1594,8 +1648,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v4.8';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v38';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v4.9';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v39';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
