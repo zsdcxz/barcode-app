@@ -17,6 +17,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* 앱 전역 핀치줌·더블탭줌 차단(스크롤은 허용) */
+html,body{touch-action:pan-x pan-y}
 body{font-family:-apple-system,'Segoe UI',sans-serif;background:#111;color:#e0e0e0;
   min-height:100vh;min-height:100dvh;overflow-x:hidden;padding-bottom:80px}
 
@@ -271,8 +273,11 @@ textarea::placeholder{color:#444}
   font-size:18px;padding:6px 14px;border-radius:10px;cursor:pointer}
 #imgOverlay .ov-label{font-family:Consolas,monospace;font-size:15px;color:#fff;
   flex:1;letter-spacing:1px;word-break:break-all}
-#imgOverlay .ov-img-wrap{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto}
-#imgOverlay .ov-img-wrap img{max-width:100%;max-height:100%;object-fit:contain}
+/* 사진 확대: 자체 핀치줌 처리(브라우저 제스처는 막고 JS로 변환) */
+#imgOverlay .ov-img-wrap{flex:1;display:flex;align-items:center;justify-content:center;
+  overflow:hidden;touch-action:none}
+#imgOverlay .ov-img-wrap img{max-width:100%;max-height:100%;object-fit:contain;
+  transform-origin:center center;will-change:transform;-webkit-user-select:none;user-select:none}
 
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;
   color:#fff;padding:10px 24px;border-radius:10px;font-size:13px;z-index:900;
@@ -291,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.0</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.1</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -644,6 +649,7 @@ function openOverlay(src, label){
   document.getElementById('overlayImg').src=src;
   document.getElementById('overlayLabel').textContent=label||'';
   document.getElementById('imgOverlay').classList.add('open');
+  ovReset();   // 확대 상태 초기화
   // 뒤로가기로 닫을 수 있도록 history 스택에 추가
   history.pushState({overlay:true},'');
 }
@@ -651,9 +657,67 @@ function openOverlay(src, label){
 function closeOverlay(){
   document.getElementById('imgOverlay').classList.remove('open');
   document.getElementById('overlayImg').src='';
+  ovReset();
   // history.back()이 이 함수를 호출했을 수도 있으므로 state 확인 후 pop
   if(history.state&&history.state.overlay) history.back();
 }
+
+// ===== 핀치줌 제어 =====
+// 앱 전역은 핀치줌 차단, 사진 확대 오버레이에서만 자체 핀치줌 허용
+function overlayOpen(){
+  const ov=document.getElementById('imgOverlay');
+  return !!(ov && ov.classList.contains('open'));
+}
+// 브라우저 기본 줌 제스처 차단(오버레이는 아래 자체 구현이 처리)
+document.addEventListener('touchmove', e=>{
+  if(e.touches.length>1 && !overlayOpen()) e.preventDefault();
+}, {passive:false});
+['gesturestart','gesturechange','gestureend'].forEach(t=>{
+  document.addEventListener(t, e=>{ e.preventDefault(); }, {passive:false});
+});
+document.addEventListener('wheel', e=>{
+  if(e.ctrlKey) e.preventDefault();   // 데스크톱 Ctrl+휠 줌 차단
+}, {passive:false});
+
+// 오버레이 자체 핀치줌/이동
+let ovScale=1, ovTx=0, ovTy=0, ovPinch=null, ovPan=null;
+function ovApply(){
+  const img=document.getElementById('overlayImg');
+  if(img) img.style.transform='translate('+ovTx+'px,'+ovTy+'px) scale('+ovScale+')';
+}
+function ovReset(){ ovScale=1; ovTx=0; ovTy=0; ovPinch=null; ovPan=null; ovApply(); }
+function ovDist(a,b){ return Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY); }
+
+(function initOverlayZoom(){
+  const wrap=document.querySelector('#imgOverlay .ov-img-wrap');
+  if(!wrap) return;
+  wrap.addEventListener('touchstart', e=>{
+    if(e.touches.length===2){
+      e.preventDefault();
+      ovPinch={d:ovDist(e.touches[0],e.touches[1]), s:ovScale};
+      ovPan=null;
+    }else if(e.touches.length===1 && ovScale>1){
+      ovPan={x:e.touches[0].clientX-ovTx, y:e.touches[0].clientY-ovTy};
+    }
+  }, {passive:false});
+  wrap.addEventListener('touchmove', e=>{
+    if(e.touches.length===2 && ovPinch){
+      e.preventDefault();
+      const d=ovDist(e.touches[0],e.touches[1]);
+      ovScale=Math.max(1, Math.min(6, ovPinch.s*(d/ovPinch.d)));
+      ovApply();
+    }else if(e.touches.length===1 && ovPan && ovScale>1){
+      e.preventDefault();
+      ovTx=e.touches[0].clientX-ovPan.x;
+      ovTy=e.touches[0].clientY-ovPan.y;
+      ovApply();
+    }
+  }, {passive:false});
+  wrap.addEventListener('touchend', ()=>{
+    ovPinch=null; ovPan=null;
+    if(ovScale<=1.01) ovReset();   // 원래 크기로 복귀 시 위치도 초기화
+  });
+})();
 
 // 뒤로가기 버튼(Android 물리/제스처) 감지
 window.addEventListener('popstate', e=>{
@@ -1695,8 +1759,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.0';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v40';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.1';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v41';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
