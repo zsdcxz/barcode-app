@@ -296,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.2</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.1</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -1269,8 +1269,7 @@ async function runBatchOCR(){
           item.status='문서 자동보정 중...';renderQueue();
           const doc=await autoDocScan(item.file);
           if(doc&&doc.canvas){
-            // 테스트: 보정 결과를 원본+대비강화 둘 다 시도(작은/저대비 2D코드 대응)
-            const symbols=await scanWarpedBoth(doc.canvas);
+            const symbols=await scanBarcodeImg(doc.canvas);
             if(symbols.length){
               item.words=symbols.map(s=>({
                 text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
@@ -1760,8 +1759,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.2';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v42';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.1';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v41';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1878,8 +1877,7 @@ async function scanBarcodeImg(img){
   // 중요: 요즘 폰 사진은 4000px+ 라 zbar가 풀해상도에서 오히려 실패함.
   // 목표 너비(1600/1000/2000px)로 '정규화'한 뒤 여러 각도로 시도 → 인식률↑, 속도↑.
   // 30° 간격 회전으로 비스듬히(평면 기울기) 찍힌 바코드도 대응(원근 왜곡은 라이브 스캔 권장).
-  // 테스트: 작은 2D코드 대응 위해 고해상도(3000)도 추가
-  const widths=[1600,1000,2000,3000];
+  const widths=[1600,1000,2000];
   const angles=[0,90,180,270,30,60,120,150];
   // 1) zbar-wasm: 1D 바코드 + QR
   for(const tw of widths){
@@ -1902,7 +1900,7 @@ async function scanBarcodeImg(img){
       hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
       const reader=new ZXing.MultiFormatReader();
       reader.setHints(hints);
-      for(const tw of [1600,1000,2400,3200]){
+      for(const tw of [1600,1000,2400]){
         const scale=tw/img.width;
         for(const angle of angles){
         try{
