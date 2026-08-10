@@ -296,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.1</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.3</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -853,16 +853,85 @@ function renderCode(value, format){
   }catch(e){ toast('바코드 생성 실패: '+e.message); }
 }
 
+// 한 카드 셀에 포맷에 맞춰 코드 렌더(1D 바코드 또는 QR)
+function fillCodeCell(cellId, tag, format){
+  const cell=document.getElementById(cellId);
+  if(!cell) return;
+  cell.innerHTML='';
+  if(format==='QR'){
+    try{
+      const writer=new ZXing.BrowserQRCodeSvgWriter();
+      const svg=writer.write(tag,300,300);
+      svg.style.background='#fff';svg.style.width='100%';svg.style.height='auto';svg.style.maxWidth='240px';
+      cell.appendChild(svg);
+    }catch(e){ cell.textContent='QR 생성 불가'; }
+  }else{
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    cell.appendChild(svg);
+    try{ JsBarcode(svg,tag,{format:format,width:2,height:55,displayValue:true,
+      fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'}); }
+    catch(e){ cell.textContent='바코드 생성 불가'; }
+  }
+}
+
+// 일괄 생성 + 집중모드 상태
+let batchTags=[], batchFmt='CODE128', batchFocusIndex=null;
+const batchScanned=new Set();
+
 function mkBatch(){
   const lines=document.getElementById('batchIn').value.split('\n').map(l=>l.trim().toUpperCase()).filter(l=>l);
   if(!lines.length)return;
-  const o=document.getElementById('bcOut');o.innerHTML='';
-  lines.forEach((tag,i)=>{
-    const d=document.createElement('div');d.className='multi-card';
-    d.innerHTML='<svg id="b_'+i+'"></svg>';o.appendChild(d);
-    JsBarcode('#b_'+i,tag,{format:fmt,width:2,height:55,displayValue:true,
-      fontSize:13,font:"Consolas,monospace",margin:8,background:'#fff',lineColor:'#000'});
+  batchTags=lines;
+  batchFmt=fmt;                       // 생성 당시 포맷 고정(집중모드에서도 동일 포맷)
+  batchFocusIndex=null; batchScanned.clear();
+  renderBatchCards();
+}
+
+// 집중모드 상태를 반영해 일괄 생성 바코드 렌더
+function renderBatchCards(){
+  const o=document.getElementById('bcOut');
+  if(!batchTags.length){ o.innerHTML=''; return; }
+  let html='<div class="sep oc-head"><span>일괄 생성 바코드 (탭하면 집중모드)</span>'+
+    '<button class="btn-s" onclick="clearBatchScanned()">스캔완료 전체해제</button></div>';
+  batchTags.forEach((tag,i)=>{
+    const scanned=batchScanned.has(i);
+    const focused=batchFocusIndex===i;
+    if(scanned){
+      html+='<div class="multi-card oc-card oc-done" onclick="tapBatchCard('+i+')">'+
+        '<div class="oc-badge">✅ 스캔 완료 · '+escHtml(tag)+'</div></div>';
+    }else if(batchFocusIndex!==null && !focused){
+      html+='<div class="multi-card oc-card oc-dim" onclick="tapBatchCard('+i+')">'+
+        '<div class="oc-msg">🔒 집중모드 사용중</div></div>';
+    }else{
+      html+='<div class="multi-card oc-card'+(focused?' oc-focus':'')+'" onclick="tapBatchCard('+i+')">'+
+        (focused?'<div class="oc-tip">🔍 바코드 집중모드 — 다시 탭하면 완료</div>':'')+
+        '<div id="bcell_'+i+'"></div></div>';
+    }
   });
+  o.innerHTML=html;
+  batchTags.forEach((tag,i)=>{
+    if(batchScanned.has(i)) return;
+    if(batchFocusIndex!==null && batchFocusIndex!==i) return;
+    fillCodeCell('bcell_'+i, tag, batchFmt);
+  });
+}
+
+function tapBatchCard(i){
+  if(batchFocusIndex===i){
+    batchScanned.add(i); batchFocusIndex=null;   // 재탭 → 해제 + 스캔완료
+  }else{
+    if(batchFocusIndex!==null) batchScanned.add(batchFocusIndex);
+    batchScanned.delete(i);
+    batchFocusIndex=i;                            // 새 카드 집중 진입
+  }
+  renderBatchCards();
+}
+
+function clearBatchScanned(){
+  if(!batchScanned.size && batchFocusIndex===null){ toast('해제할 스캔완료가 없습니다'); return; }
+  batchScanned.clear(); batchFocusIndex=null;
+  renderBatchCards();
+  toast('스캔완료 전체 해제됨');
 }
 
 // ===== 2. QR/바코드 스캔 =====
@@ -1759,8 +1828,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.1';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v41';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.3';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v43';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
