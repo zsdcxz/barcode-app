@@ -296,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.3</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.4</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -814,6 +814,18 @@ function mkBC(){
   renderCode(raw, fmt);
 }
 
+// ZXing SVG writer는 viewBox를 넣지 않아, CSS로 크기를 바꾸면 비율을 못 잡고
+// 아래쪽이 잘림 → width/height 속성으로 viewBox를 보강(속성은 PNG 내보내기용으로 유지).
+function fixQrSvg(svg){
+  if(!svg.getAttribute('viewBox')){
+    const w=parseFloat(svg.getAttribute('width'))||512;
+    const h=parseFloat(svg.getAttribute('height'))||w;
+    svg.setAttribute('viewBox','0 0 '+w+' '+h);
+  }
+  svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+  return svg;
+}
+
 // 명시한 값으로 직접 코드 생성(입력칸을 거치지 않음 → 줄바꿈 등 보존)
 function renderCode(value, format){
   if(!value && value!=='') return;
@@ -835,7 +847,7 @@ function renderCode(value, format){
         hints.set(ZXing.EncodeHintType.ERROR_CORRECTION,'L');
         hints.set(ZXing.EncodeHintType.MARGIN,2);
       }catch(e){ hints=null; }
-      const svg = hints ? writer.write(value,512,512,hints) : writer.write(value,512,512);
+      const svg = fixQrSvg(hints ? writer.write(value,512,512,hints) : writer.write(value,512,512));
       svg.setAttribute('id','bcSvg');
       // 화면에서 최대한 크게 표시(모듈을 물리적으로 키워 인식률↑)
       svg.style.background='#fff';svg.style.width='100%';svg.style.height='auto';
@@ -861,7 +873,7 @@ function fillCodeCell(cellId, tag, format){
   if(format==='QR'){
     try{
       const writer=new ZXing.BrowserQRCodeSvgWriter();
-      const svg=writer.write(tag,300,300);
+      const svg=fixQrSvg(writer.write(tag,300,300));
       svg.style.background='#fff';svg.style.width='100%';svg.style.height='auto';svg.style.maxWidth='240px';
       cell.appendChild(svg);
     }catch(e){ cell.textContent='QR 생성 불가'; }
@@ -1828,8 +1840,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.3';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v43';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.4';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v44';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
