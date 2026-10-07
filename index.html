@@ -296,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.5</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.6</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -1841,8 +1841,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.5';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v45';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.6';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v46';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1970,10 +1970,18 @@ function normalizeCodeValue(v){
 
 async function scanBarcode(file){
   const img=await fileToImage(file);
-  const r=await scanBarcodeImg(img);
+  // 1) zbar 빠른 시도(2회): 똑바로 찍힌 1D 바코드·일반 QR은 여기서 끝남
+  let r=await scanBarcodeImg(img,{zxing:false,quick:true});
   if(r.length) return r;
-  // 전체 사진에서 못 찾으면 타일 순회(작은 DataMatrix/QR이 주변 물체에 묻힌 경우)
-  return scanTiles(img);
+  // 2) 타일 순회: 주변 물체에 묻힌 작은 DataMatrix/흰색 QR.
+  //    zbar 전체 각도 순회(사진당 4~7초)보다 훨씬 빠름(0.8~1.3초, 실측)
+  r=await scanTiles(img);
+  if(r.length) return r;
+  // 3) zbar 나머지 각도: 비스듬히 찍힌 1D 바코드
+  r=await scanBarcodeImg(img,{zxing:false,skipQuick:true});
+  if(r.length) return r;
+  // 4) ZXing 전체: 화면을 꽉 채운 큰 코드(타일보다 커서 타일로는 못 잡는 경우)
+  return scanBarcodeImg(img,{zbar:false});
 }
 
 // ===== 타일 순회 스캔 =====
@@ -2022,16 +2030,22 @@ async function scanTiles(img){
 }
 
 // 이미지 또는 캔버스를 받아 바코드/QR 디코딩(자동 문서보정 결과에도 재사용)
-async function scanBarcodeImg(img){
+// opts.zbar / opts.zxing 로 단계 선택(기본 둘 다). 사진 OCR은 그 사이에 타일 스캔을 끼움.
+async function scanBarcodeImg(img,opts){
+  const useZbar=!opts||opts.zbar!==false, useZxing=!opts||opts.zxing!==false;
   // 중요: 요즘 폰 사진은 4000px+ 라 zbar가 풀해상도에서 오히려 실패함.
   // 목표 너비(1600/1000/2000px)로 '정규화'한 뒤 여러 각도로 시도 → 인식률↑, 속도↑.
   // 30° 간격 회전으로 비스듬히(평면 기울기) 찍힌 바코드도 대응(원근 왜곡은 라이브 스캔 권장).
-  const widths=[1600,1000,2000];
+  const widths=useZbar?[1600,1000,2000]:[];
   const angles=[0,90,180,270,30,60,120,150];
+  // opts.quick: 정방향/세로만(1600px × 0°·90°) — 똑바로 찍힌 1D 바코드용 빠른 시도
+  // opts.skipQuick: 위 2회를 이미 했으면 건너뜀
+  const quick=!!(opts&&opts.quick), skipQuick=!!(opts&&opts.skipQuick);
   // 1) zbar-wasm: 1D 바코드 + QR
-  for(const tw of widths){
+  for(const tw of (quick?widths.slice(0,1):widths)){
     const scale=tw/img.width;
-    for(const angle of angles){
+    for(const angle of (quick?[0,90]:angles)){
+      if(skipQuick && tw===1600 && (angle===0||angle===90)) continue;
       try{
         const data=imageToData(img,angle,scale);
         const symbols=await zbarWasm.scanImageData(data);
@@ -2042,7 +2056,7 @@ async function scanBarcodeImg(img){
     }
   }
   // 2) ZXing: zbar가 못 읽는 DataMatrix(Dell 서비스태그 등) + QR 보조
-  if(window.ZXing){
+  if(useZxing && window.ZXing){
     try{
       const hints=new Map();
       hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.QR_CODE]);
