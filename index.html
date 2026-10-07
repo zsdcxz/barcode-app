@@ -296,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.4</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.5</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -1006,6 +1006,7 @@ async function startScanner(){
 
 // 인식 순간 자동 촬영(현재 프레임 캡처) + 스캔 정지 + 결과 표시 + 자동 저장
 async function onScanDetected(text,result){
+  text=extractDellTag(text)||text;   // Dell QR URL → 서비스태그
   const snap=captureSnapshot();
   const type=result.result.format?.formatName||'QR/Barcode';
   document.getElementById('scanVal').textContent=text;
@@ -1032,7 +1033,7 @@ function toggleMultiMode(on){
 
 // 연속 모드에서 코드 인식: 목록에 누적(중복 제외) 후 계속 스캔
 function onMultiDetected(text){
-  const v=(text||'').trim();
+  const v=extractDellTag(text)||(text||'').trim();   // Dell QR URL → 서비스태그
   if(!v) return;
   if(multiList.includes(v)){ toast('이미 추가됨: '+v); }
   else{
@@ -1334,7 +1335,7 @@ async function runBatchOCR(){
         const symbols=await scanBarcode(item.file);
         if(symbols.length){
           item.words=symbols.map(s=>({
-            text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+            text:normalizeCodeValue(s.value),
             conf:100,isBc:true,bcType:s.type
           })).filter(w=>w.text.length>=2);
           if(item.words.length){
@@ -1353,7 +1354,7 @@ async function runBatchOCR(){
             const symbols=await scanBarcodeImg(doc.canvas);
             if(symbols.length){
               item.words=symbols.map(s=>({
-                text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+                text:normalizeCodeValue(s.value),
                 conf:100,isBc:true,bcType:s.type
               })).filter(w=>w.text.length>=2);
               if(item.words.length){
@@ -1732,7 +1733,7 @@ async function confirmDocEditor(){
     const item=ocrFiles.find(f=>f.id===deState.id);
     if(symbols.length && item){
       item.words=symbols.map(s=>({
-        text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+        text:normalizeCodeValue(s.value),
         conf:100,isBc:true,bcType:s.type
       })).filter(w=>w.text.length>=2);
       if(item.words.length){
@@ -1774,7 +1775,7 @@ async function rescanPreview(){
     const item=ocrFiles.find(f=>f.id===(deState&&deState.id));
     if(symbols.length && item){
       item.words=symbols.map(s=>({
-        text:s.value.replace(/[^A-Za-z0-9\-]/g,'').toUpperCase(),
+        text:normalizeCodeValue(s.value),
         conf:100,isBc:true,bcType:s.type
       })).filter(w=>w.text.length>=2);
       if(item.words.length){
@@ -1840,8 +1841,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.4';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v44';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.5';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v45';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1948,9 +1949,76 @@ async function bandRescue(file,worker){
   return out;
 }
 
+// Dell MyDell QR은 URL을 담고 있음: https://www.dell.com/support/pid?s=q3&t=5F61VJ4
+// → t= 값이 서비스태그. Dell URL이 아니면 null.
+function extractDellTag(v){
+  const s=String(v||'').trim();
+  if(!/^https?:\/\//i.test(s)) return null;
+  try{
+    const u=new URL(s);
+    if(!/(^|\.)dell\.com$/i.test(u.hostname)) return null;
+    const t=u.searchParams.get('t')||u.searchParams.get('servicetag')||u.searchParams.get('st');
+    const tag=t?t.replace(/[^A-Za-z0-9]/g,'').toUpperCase():'';
+    return tag||null;
+  }catch(e){ return null; }
+}
+
+// 인식값 → 칩/바코드용 값(영숫자·하이픈만, 대문자). Dell QR URL은 서비스태그로 변환.
+function normalizeCodeValue(v){
+  return extractDellTag(v) || String(v||'').replace(/[^A-Za-z0-9\-]/g,'').toUpperCase();
+}
+
 async function scanBarcode(file){
   const img=await fileToImage(file);
-  return scanBarcodeImg(img);
+  const r=await scanBarcodeImg(img);
+  if(r.length) return r;
+  // 전체 사진에서 못 찾으면 타일 순회(작은 DataMatrix/QR이 주변 물체에 묻힌 경우)
+  return scanTiles(img);
+}
+
+// ===== 타일 순회 스캔 =====
+// ZXing의 DataMatrix 검출기는 코드가 이미지 중앙의 '주인공'일 때만 위치를 잘 찾는다.
+// 통풍구·커넥터 등이 화면을 채운 사진은 전체로는 실패하지만, 코드만 잘라내면 원본
+// 크기로도 읽힌다(Dell ST 1LW5XF3 사진 실측). 그래서 겹치는 타일로 잘라 하나씩 검사.
+async function scanTiles(img){
+  if(!window.ZXing) return [];
+  const hints=new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.QR_CODE]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+  const reader=new ZXing.MultiFormatReader();
+  reader.setHints(hints);
+  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
+  const base=Math.min(iw,ih);
+  const found=new Map();
+  let n=0;
+  for(const frac of [0.15,0.25,0.4]){
+    const s=Math.round(base*frac), step=Math.max(1,Math.round(s/2));
+    for(let y=0;y+s<=ih+step;y+=step){
+      for(let x=0;x+s<=iw+step;x+=step){
+        const w=Math.min(s,iw-x), h=Math.min(s,ih-y);
+        if(w<40||h<40) continue;
+        // 타일을 400~800px로 맞춤(작으면 확대, 크면 축소)
+        const m=Math.max(w,h), sc=m<400?400/m:(m>800?800/m:1);
+        const W=Math.round(w*sc), H=Math.round(h*sc);
+        const c=document.createElement('canvas'); c.width=W; c.height=H;
+        const ctx=c.getContext('2d');
+        ctx.drawImage(img,x,y,w,h,0,0,W,H);
+        const d=ctx.getImageData(0,0,W,H).data, lum=new Uint8ClampedArray(W*H);
+        for(let i=0,j=0;i<d.length;i+=4,j++) lum[j]=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)&0xff;
+        const src=new ZXing.RGBLuminanceSource(lum,W,H);
+        for(const s2 of [src,src.invert()]){   // 흰색 코드(검정 라벨) 대응
+          try{
+            const r=reader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(s2)),hints);
+            if(r&&r.getText()&&!found.has(r.getText()))
+              found.set(r.getText(),ZXing.BarcodeFormat[r.getBarcodeFormat()]);
+          }catch(e){}
+        }
+        if(++n%20===0) await new Promise(r=>setTimeout(r,0));   // UI 멈춤 방지
+      }
+    }
+    if(found.size) break;   // 이 크기에서 찾았으면 더 큰 타일은 생략
+  }
+  return [...found].map(([value,type])=>({value,type}));
 }
 
 // 이미지 또는 캔버스를 받아 바코드/QR 디코딩(자동 문서보정 결과에도 재사용)
