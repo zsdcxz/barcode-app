@@ -296,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.6</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.7</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -1841,8 +1841,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.6';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v46';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.7';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v47';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
@@ -1970,18 +1970,76 @@ function normalizeCodeValue(v){
 
 async function scanBarcode(file){
   const img=await fileToImage(file);
-  // 1) zbar 빠른 시도(2회): 똑바로 찍힌 1D 바코드·일반 QR은 여기서 끝남
-  let r=await scanBarcodeImg(img,{zxing:false,quick:true});
+  // 1) 기울기 보정 후 zbar: 막대 방향으로 기울기를 재서 수평으로 돌린 뒤 스캔.
+  //    똑바로 찍힌 것(기울기 0°)도 여기서 끝남. 54개 변형 실측 53/54, 평균 0.35초
+  let r=await scanDeskew(img);
   if(r.length) return r;
   // 2) 타일 순회: 주변 물체에 묻힌 작은 DataMatrix/흰색 QR.
   //    zbar 전체 각도 순회(사진당 4~7초)보다 훨씬 빠름(0.8~1.3초, 실측)
   r=await scanTiles(img);
   if(r.length) return r;
-  // 3) zbar 나머지 각도: 비스듬히 찍힌 1D 바코드
-  r=await scanBarcodeImg(img,{zxing:false,skipQuick:true});
+  // 3) zbar 고정 각도 순회(예비): 기울기 추정이 빗나간 경우
+  r=await scanBarcodeImg(img,{zxing:false});
   if(r.length) return r;
   // 4) ZXing 전체: 화면을 꽉 채운 큰 코드(타일보다 커서 타일로는 못 잡는 경우)
   return scanBarcodeImg(img,{zbar:false});
+}
+
+// ===== 기울기 보정 스캔 =====
+// 1D 바코드의 막대는 같은 방향의 강한 테두리를 대량으로 만든다. Sobel 기울기 방향을
+// 크기 가중 히스토그램으로 모아(90° 주기로 접음) 가장 많은 방향 = 기울기로 본다.
+// 라벨의 글자·테두리도 바코드와 같이 기울어 있어 같은 봉우리를 강화한다.
+// 반환: 서로 8° 이상 떨어진 상위 k개 기울기(-45~45°)
+function estimateSkews(img,k){
+  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
+  const sc=600/Math.max(iw,ih), W=Math.round(iw*sc), H=Math.round(ih*sc);
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  const ctx=c.getContext('2d'); ctx.drawImage(img,0,0,W,H);
+  const d=ctx.getImageData(0,0,W,H).data, g=new Float32Array(W*H);
+  for(let i=0,j=0;i<d.length;i+=4,j++) g[j]=d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114;
+  const hist=new Float64Array(90);
+  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+    const p=y*W+x;
+    const gx=g[p-W+1]+2*g[p+1]+g[p+W+1]-g[p-W-1]-2*g[p-1]-g[p+W-1];
+    const gy=g[p+W-1]+2*g[p+W]+g[p+W+1]-g[p-W-1]-2*g[p-W]-g[p-W+1];
+    const m=Math.hypot(gx,gy); if(m<80) continue;          // 약한 테두리(잡음) 제외
+    const a=((Math.atan2(gy,gx)*180/Math.PI%90)+90)%90;
+    hist[Math.floor(a)]+=m;
+  }
+  const sm=new Float64Array(90);                             // ±2° 원형 평활
+  for(let i=0;i<90;i++) for(let o=-2;o<=2;o++) sm[i]+=hist[(i+o+90)%90];
+  const idx=[...sm.keys()].sort((a,b)=>sm[b]-sm[a]), peaks=[];
+  for(const i of idx){
+    if(peaks.every(p=>Math.min(Math.abs(p-i),90-Math.abs(p-i))>=8)) peaks.push(i);
+    if(peaks.length>=(k||3)) break;
+  }
+  return peaks.map(p=>p>45?p-90:p);
+}
+
+// 캔버스를 키워서 회전(모서리 잘림 없음, 흰 배경). tw=긴 변 목표 px
+function rotatedData(img,deg,tw){
+  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
+  const sc=tw/Math.max(iw,ih), sw=iw*sc, sh=ih*sc, rad=deg*Math.PI/180;
+  const cs=Math.abs(Math.cos(rad)), sn=Math.abs(Math.sin(rad));
+  const w=Math.round(sw*cs+sh*sn), h=Math.round(sw*sn+sh*cs);
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h);
+  ctx.translate(w/2,h/2); ctx.rotate(rad); ctx.drawImage(img,-sw/2,-sh/2,sw,sh);
+  return ctx.getImageData(0,0,w,h);
+}
+
+async function scanDeskew(img){
+  let skews;
+  try{ skews=estimateSkews(img,3); }catch(e){ return []; }
+  for(const a of skews) for(const tw of [1600,1000,2000]){
+    try{
+      const symbols=await zbarWasm.scanImageData(rotatedData(img,-a,tw));
+      if(symbols&&symbols.length)
+        return symbols.map(s=>({value:s.decode(),type:(s.typeName||'').replace('ZBAR_','')}));
+    }catch(e){}
+  }
+  return [];
 }
 
 // ===== 타일 순회 스캔 =====
