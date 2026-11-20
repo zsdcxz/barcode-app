@@ -296,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.7</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.8</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -808,9 +808,36 @@ async function checkCamPermission(){
 }
 
 // ===== 1. 바코드 생성 =====
+// ===== 한글 → 영문 자판(두벌식) 변환: 홍길동 → ghdrlfehd =====
+// 한글 상태로 스캐너/키보드에 입력한 것과 같은 키 입력으로 바꿔 바코드에 담는다.
+const HG_CHO=['r','R','s','e','E','f','a','q','Q','t','T','d','w','W','c','z','x','v','g'];
+const HG_JUNG=['k','o','i','O','j','p','u','P','h','hk','ho','hl','y','n','nj','np','nl','b','m','ml','l'];
+const HG_JONG=['','r','R','rt','s','sw','sg','e','f','fr','fa','fq','ft','fx','fv','fg','a','q','qt','t','T','d','w','c','z','x','v','g'];
+// 호환 자모(ㄱ,ㅏ 등 낱글자)
+const HG_COMPAT={'ㄱ':'r','ㄲ':'R','ㄳ':'rt','ㄴ':'s','ㄵ':'sw','ㄶ':'sg','ㄷ':'e','ㄸ':'E','ㄹ':'f','ㄺ':'fr','ㄻ':'fa','ㄼ':'fq','ㄽ':'ft','ㄾ':'fx','ㄿ':'fv','ㅀ':'fg','ㅁ':'a','ㅂ':'q','ㅃ':'Q','ㅄ':'qt','ㅅ':'t','ㅆ':'T','ㅇ':'d','ㅈ':'w','ㅉ':'W','ㅊ':'c','ㅋ':'z','ㅌ':'x','ㅍ':'v','ㅎ':'g',
+  'ㅏ':'k','ㅐ':'o','ㅑ':'i','ㅒ':'O','ㅓ':'j','ㅔ':'p','ㅕ':'u','ㅖ':'P','ㅗ':'h','ㅘ':'hk','ㅙ':'ho','ㅚ':'hl','ㅛ':'y','ㅜ':'n','ㅝ':'nj','ㅞ':'np','ㅟ':'nl','ㅠ':'b','ㅡ':'m','ㅢ':'ml','ㅣ':'l'};
+function hangulToQwerty(str){
+  let out='';
+  for(const ch of String(str)){
+    const c=ch.charCodeAt(0);
+    if(c>=0xAC00&&c<=0xD7A3){
+      const n=c-0xAC00;
+      out+=HG_CHO[Math.floor(n/588)]+HG_JUNG[Math.floor((n%588)/28)]+HG_JONG[n%28];
+    }else if(HG_COMPAT[ch]!==undefined) out+=HG_COMPAT[ch];
+    else out+=ch;
+  }
+  return out;
+}
+const HANGUL_RE=/[ㄱ-ㆎ가-힣]/;
+
 function mkBC(){
-  const raw=document.getElementById('tagIn').value.trim();
+  let raw=document.getElementById('tagIn').value.trim();
   if(!raw)return;
+  if(HANGUL_RE.test(raw)){                  // 한글이면 영문 자판 입력으로 변환
+    raw=hangulToQwerty(raw);
+    document.getElementById('tagIn').value=raw;
+    toast('한글 → 영문 자판으로 변환: '+raw);
+  }
   renderCode(raw, fmt);
 }
 
@@ -891,7 +918,7 @@ let batchTags=[], batchFmt='CODE128', batchFocusIndex=null;
 const batchScanned=new Set();
 
 function mkBatch(){
-  const lines=document.getElementById('batchIn').value.split('\n').map(l=>l.trim().toUpperCase()).filter(l=>l);
+  const lines=document.getElementById('batchIn').value.split('\n').map(l=>hangulToQwerty(l.trim()).toUpperCase()).filter(l=>l);
   if(!lines.length)return;
   batchTags=lines;
   batchFmt=fmt;                       // 생성 당시 포맷 고정(집중모드에서도 동일 포맷)
@@ -1084,7 +1111,7 @@ function copyMerged(){
 
 // 공용: 값 배열을 구분자로 합쳐 하나의 코드(CODE128/QR)로 생성 → 생성 탭 표시
 function generateMerged(values, sep, format){
-  const list=(values||[]).map(v=>String(v).trim()).filter(Boolean);
+  const list=(values||[]).map(v=>hangulToQwerty(String(v).trim())).filter(Boolean);
   if(!list.length){ toast('합칠 값이 없습니다'); return; }
   const s=decodeSep(sep);
   const merged=list.join(s);
@@ -1841,8 +1868,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.7';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v47';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.8';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v48';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
