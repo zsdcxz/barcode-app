@@ -296,7 +296,7 @@ textarea::placeholder{color:#444}
 
 <div class="hdr">
   <h1>Service Tag Barcode</h1>
-  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.8</span>
+  <span class="tag" id="verTag" style="cursor:pointer" onclick="checkUpdate()" title="탭하면 업데이트 확인">v5.9</span>
   <span class="tag" id="connTag">OFFLINE</span>
 </div>
 
@@ -833,7 +833,7 @@ const HANGUL_RE=/[ㄱ-ㆎ가-힣]/;
 function mkBC(){
   let raw=document.getElementById('tagIn').value.trim();
   if(!raw)return;
-  if(HANGUL_RE.test(raw)){                  // 한글이면 영문 자판 입력으로 변환
+  if(fmt!=='QR' && HANGUL_RE.test(raw)){                  // 1D 바코드만: 한글 → 영문 자판 변환(QR은 한글 그대로)
     raw=hangulToQwerty(raw);
     document.getElementById('tagIn').value=raw;
     toast('한글 → 영문 자판으로 변환: '+raw);
@@ -918,7 +918,7 @@ let batchTags=[], batchFmt='CODE128', batchFocusIndex=null;
 const batchScanned=new Set();
 
 function mkBatch(){
-  const lines=document.getElementById('batchIn').value.split('\n').map(l=>hangulToQwerty(l.trim()).toUpperCase()).filter(l=>l);
+  const lines=document.getElementById('batchIn').value.split('\n').map(l=>(fmt==='QR'?l.trim():hangulToQwerty(l.trim())).toUpperCase()).filter(l=>l);
   if(!lines.length)return;
   batchTags=lines;
   batchFmt=fmt;                       // 생성 당시 포맷 고정(집중모드에서도 동일 포맷)
@@ -1111,7 +1111,7 @@ function copyMerged(){
 
 // 공용: 값 배열을 구분자로 합쳐 하나의 코드(CODE128/QR)로 생성 → 생성 탭 표시
 function generateMerged(values, sep, format){
-  const list=(values||[]).map(v=>hangulToQwerty(String(v).trim())).filter(Boolean);
+  const list=(values||[]).map(v=>(format==='QR'?String(v).trim():hangulToQwerty(String(v).trim()))).filter(Boolean);
   if(!list.length){ toast('합칠 값이 없습니다'); return; }
   const s=decodeSep(sep);
   const merged=list.join(s);
@@ -1868,8 +1868,8 @@ function doInstall(){
 }
 
 // ===== 버전 확인 =====
-const APP_VER='v5.8';               // 표시용 앱 버전
-const BUILD_CACHE='barcode-v48';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
+const APP_VER='v5.9';               // 표시용 앱 버전
+const BUILD_CACHE='barcode-v49';    // 이 빌드가 기준으로 삼는 sw 캐시 이름
 async function checkUpdate(){
   try{
     const r=await fetch('sw.js?_='+Date.now(),{cache:'no-store'});
